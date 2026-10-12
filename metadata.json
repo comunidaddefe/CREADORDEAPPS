@@ -1,0 +1,8 @@
+{
+  "name": "AppCraft AI Builder",
+  "description": "An intuitive platform for building multi-platform applications using drag-and-drop and natural language generation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
