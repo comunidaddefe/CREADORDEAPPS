@@ -1,6 +1,18 @@
 import 'dotenv/config';
 import express from 'express';
+import path from 'path';
 import { GoogleGenAI } from '@google/genai';
+
+export const SUPPORTED_STACKS = [
+  'javascript', 'typescript', 'html_css', 'php', 'ruby',
+  'java', 'csharp', 'go', 'rust', 'elixir', 'scala',
+  'python', 'r', 'julia',
+  'dart', 'swift', 'kotlin',
+  'cpp', 'c', 'zig',
+  'haskell', 'erlang', 'lua', 'perl', 'bash'
+] as const;
+
+export type SupportedStack = typeof SUPPORTED_STACKS[number];
 
 const app = express();
 app.use(express.json());
@@ -21,21 +33,150 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'appcraft-engine', version: '1.0.0' });
 });
 
-const getAiClient = () => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  return new GoogleGenAI({
-    apiKey: apiKey || '',
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
+// Telemetría verídica: origen explícito, unidades y estados LIVE, DEMO, NO_DATA, ERROR
+app.get('/api/data', (req, res) => {
+  const rawSource = req.query.source;
+  const rawType = req.query.type;
+
+  if (!rawSource || !rawType || typeof rawSource !== 'string' || typeof rawType !== 'string') {
+    return res.status(400).json({
+      origin: 'system.gateway',
+      status: 'ERROR',
+      unit: 'none',
+      updatedAt: new Date().toISOString(),
+      description: 'Query parameters "source" and "type" must be non-empty strings.',
+    });
+  }
+
+  const source = rawSource.trim();
+  const type = rawType.trim();
+  const updatedAt = new Date().toISOString();
+  const uptime = process.uptime();
+  const mem = process.memoryUsage();
+
+  // Telemetría genuina de sistema Node.js
+  const isSystemSource = source.startsWith('system.') || source.startsWith('runtime.') || source.startsWith('process.');
+
+  if (isSystemSource) {
+    if (type === 'stat') {
+      const isUptime = source.includes('uptime');
+      return res.json({
+        origin: 'system.node_runtime',
+        status: 'LIVE',
+        unit: isUptime ? 'seconds' : 'MB',
+        value: isUptime ? `${Math.floor(uptime)}s` : `${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB`,
+        updatedAt,
+        description: isUptime ? 'Node.js process uptime' : 'V8 heap memory usage',
+      });
+    }
+
+    if (type === 'table') {
+      return res.json({
+        origin: 'system.node_runtime',
+        status: 'LIVE',
+        unit: 'process_attributes',
+        rows: [
+          { key: 'Node Version', value: process.version },
+          { key: 'Process Architecture', value: process.arch },
+          { key: 'Platform OS', value: process.platform },
+          { key: 'PID', value: String(process.pid) },
+          { key: 'V8 Heap Total', value: `${(mem.heapTotal / 1024 / 1024).toFixed(2)} MB` },
+          { key: 'Process Uptime', value: `${Math.floor(uptime)}s` },
+        ],
+        updatedAt,
+        description: 'Authentic Node.js process runtime properties',
+      });
+    }
+  }
+
+  // Fuentes no conectadas: declaradas explícitamente como DEMO o NO_DATA sin inventar métricas
+  if (type === 'stat') {
+    return res.json({
+      origin: 'demo.mock_provider',
+      status: 'DEMO',
+      unit: 'USD',
+      value: '$0.00',
+      updatedAt,
+      description: `No active collector connected for source: "${source}".`,
+    });
+  }
+
+  if (type === 'bar_chart') {
+    return res.json({
+      origin: 'demo.mock_provider',
+      status: 'DEMO',
+      unit: 'ratio_index',
+      series: [],
+      updatedAt,
+      description: `Metric connector inactive for source: "${source}".`,
+    });
+  }
+
+  if (type === 'line_chart') {
+    return res.json({
+      origin: 'demo.mock_provider',
+      status: 'NO_DATA',
+      unit: 'datapoints',
+      points: [],
+      updatedAt,
+      description: `No active timeseries stream for source: "${source}".`,
+    });
+  }
+
+  if (type === 'table') {
+    return res.json({
+      origin: 'demo.mock_provider',
+      status: 'NO_DATA',
+      unit: 'tabular_records',
+      rows: [],
+      updatedAt,
+      description: `No data records available for table: "${source}".`,
+    });
+  }
+
+  return res.json({
+    origin: 'demo.mock_provider',
+    status: 'NO_DATA',
+    unit: 'event_stream',
+    items: [],
+    updatedAt,
+    description: `No events in queue for feed: "${source}".`,
   });
+});
+
+const getAiClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured in the environment.');
+  }
+  return new GoogleGenAI({
+    apiKey,
+  });
+};
+
+const extractJsonArray = (text: string): string => {
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  const target = codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
+  const arrayMatch = target.match(/\[[\s\S]*\]/);
+  return arrayMatch ? arrayMatch[0].trim() : target;
+};
+
+const extractCode = (text: string): string => {
+  const codeBlockMatch = text.match(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)\s*```/);
+  return codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
 };
 
 // Generación de layout canónico (disponible en /generate y /api/generate-dashboard)
 const handleGenerateLayout = async (req: express.Request, res: express.Response) => {
-  const { prompt, stack = 'react' } = req.body;
+  const { prompt, stack = 'typescript' } = req.body || {};
+
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ error: 'Field "prompt" is required and must be a non-empty string.' });
+  }
+
+  if (!SUPPORTED_STACKS.includes(stack as any)) {
+    return res.status(400).json({ error: `Unsupported stack "${stack}". Supported stacks: ${SUPPORTED_STACKS.join(', ')}` });
+  }
   
   const systemInstruction = `You are an expert dashboard architect specializing in multi-stack applications (${stack}).
   Return a clean JSON array representing the dashboard layout components based on user requirements.
@@ -53,7 +194,7 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
   try {
     const ai = getAiClient();
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         systemInstruction,
@@ -61,10 +202,18 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
       },
     });
 
-    const dashboardLayout = JSON.parse(response.text || '[]');
+    const rawText = extractJsonArray(response.text || '[]');
+    const dashboardLayout = JSON.parse(rawText);
+    if (!Array.isArray(dashboardLayout)) {
+      return res.status(502).json({ error: 'LLM did not return a valid layout array.' });
+    }
     res.json(dashboardLayout);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to generate dashboard layout' });
+  } catch (error: any) {
+    console.error('Error generating layout:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate dashboard layout', 
+      details: error.message || error 
+    });
   }
 };
 
@@ -74,6 +223,32 @@ app.post('/api/generate-dashboard', handleGenerateLayout);
 // Síntesis a código nativo políglota (disponible en /export y /api/export-code)
 const handleExportCode = async (req: express.Request, res: express.Response) => {
   const { layout, stack = 'typescript', provider = 'gemini', model = 'llama3.2' } = req.body;
+
+  if (!SUPPORTED_STACKS.includes(stack as any)) {
+    return res.status(400).json({
+      error: `Invalid stack "${stack}". Allowed stacks: ${SUPPORTED_STACKS.join(', ')}`
+    });
+  }
+
+  if (!layout || !Array.isArray(layout) || layout.length === 0) {
+    return res.status(400).json({ error: 'Field "layout" must be a non-empty array of widgets.' });
+  }
+
+  const VALID_COMPONENT_TYPES = ['stat', 'bar_chart', 'line_chart', 'table', 'list'];
+  const isInvalidWidget = layout.some(
+    (w) =>
+      !w ||
+      typeof w.id !== 'string' ||
+      !VALID_COMPONENT_TYPES.includes(w.type) ||
+      !w.props ||
+      typeof w.props.title !== 'string' ||
+      typeof w.props.data_source !== 'string'
+  );
+  if (isInvalidWidget) {
+    return res.status(400).json({
+      error: 'Each widget in layout must contain valid "id", "type" (stat|bar_chart|line_chart|table|list), and "props" (title, data_source).',
+    });
+  }
 
   const systemInstruction = `You are a Principal Software Architect generating native, production-grade code for the language/stack: "${stack}".
 Follow the 'Zero AI Design' policy strictly:
@@ -86,6 +261,7 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
     try {
       const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
         method: 'POST',
+        signal: AbortSignal.timeout(60000),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model,
@@ -100,10 +276,7 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
       }
 
       const data = await ollamaResponse.json();
-      let code = data.response || '';
-      if (code.startsWith('```')) {
-        code = code.replace(/^```[a-zA-Z]*\n/, '').replace(/\n```$/, '');
-      }
+      const code = extractCode(data.response || '');
       return res.json({ code, stack, provider: 'ollama', model });
     } catch (error) {
       return res.status(503).json({
@@ -115,67 +288,47 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
   try {
     const ai = getAiClient();
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       contents: JSON.stringify(layout, null, 2),
       config: {
         systemInstruction,
       },
     });
 
-    let code = response.text || '';
-    if (code.startsWith('```')) {
-      code = code.replace(/^```[a-zA-Z]*\n/, '').replace(/\n```$/, '');
-    }
-
+    const code = extractCode(response.text || '');
     res.json({ code, stack, provider: 'gemini' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to synthesize code for target stack with Gemini' });
+  } catch (error: any) {
+    console.error('Error synthesizing target code:', error);
+    res.status(500).json({ 
+      error: 'Failed to synthesize code for target stack with Gemini',
+      details: error.message || error
+    });
   }
 };
 
 app.post('/export', handleExportCode);
 app.post('/api/export-code', handleExportCode);
 
-app.post('/api/ollama-generate', async (req, res) => {
-  const { prompt, model = 'llama3.2', system } = req.body;
-
-  try {
-    const response = await fetch('http://localhost:11434/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        prompt,
-        system,
-        stream: false,
-      }),
-    });
-
-    if (!response.ok) {
-      return res.status(response.status).json({ error: `Ollama returned ${response.statusText}` });
-    }
-    const data = await response.json();
-    res.json({ response: data.response });
-  } catch (error) {
-    res.status(500).json({ error: 'Ollama not reachable at http://localhost:11434' });
-  }
-});
-
-import { createServer } from 'vite';
-
-const vite = await createServer({
-  server: {
-    middlewareMode: true,
-    watch: {
-      usePolling: true,
-      interval: 100,
-    },
-  },
-  appType: 'spa',
-});
-
+// Configuración de Vite o Estáticos según el entorno
 if (process.env.NODE_ENV !== 'production') {
+  const { createServer } = await import('vite');
+  const vite = await createServer({
+    server: {
+      middlewareMode: true,
+      watch: {
+        usePolling: true,
+        interval: 100,
+      },
+    },
+    appType: 'spa',
+  });
   app.use(vite.middlewares);
+} else {
+  const clientDist = path.resolve(process.cwd(), 'dist');
+  app.use(express.static(clientDist));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
 }
 
 
