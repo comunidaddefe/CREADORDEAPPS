@@ -1,19 +1,40 @@
+import 'dotenv/config';
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 
 const app = express();
 app.use(express.json());
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
+// Middleware CORS para integración en microservicios y API Gateways
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
 });
 
-app.post('/api/generate-dashboard', async (req, res) => {
+// Health check para el balanceador / gateway
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', service: 'appcraft-engine', version: '1.0.0' });
+});
+
+const getAiClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  return new GoogleGenAI({
+    apiKey: apiKey || '',
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+};
+
+// Generación de layout canónico (disponible en /generate y /api/generate-dashboard)
+const handleGenerateLayout = async (req: express.Request, res: express.Response) => {
   const { prompt, stack = 'react' } = req.body;
   
   const systemInstruction = `You are an expert dashboard architect specializing in multi-stack applications (${stack}).
@@ -30,6 +51,7 @@ app.post('/api/generate-dashboard', async (req, res) => {
   }`;
 
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
@@ -44,9 +66,13 @@ app.post('/api/generate-dashboard', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: 'Failed to generate dashboard layout' });
   }
-});
+};
 
-app.post('/api/export-code', async (req, res) => {
+app.post('/generate', handleGenerateLayout);
+app.post('/api/generate-dashboard', handleGenerateLayout);
+
+// Síntesis a código nativo políglota (disponible en /export y /api/export-code)
+const handleExportCode = async (req: express.Request, res: express.Response) => {
   const { layout, stack = 'typescript', provider = 'gemini', model = 'llama3.2' } = req.body;
 
   const systemInstruction = `You are a Principal Software Architect generating native, production-grade code for the language/stack: "${stack}".
@@ -87,6 +113,7 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
   }
 
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: JSON.stringify(layout, null, 2),
@@ -104,7 +131,10 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
   } catch (error) {
     res.status(500).json({ error: 'Failed to synthesize code for target stack with Gemini' });
   }
-});
+};
+
+app.post('/export', handleExportCode);
+app.post('/api/export-code', handleExportCode);
 
 app.post('/api/ollama-generate', async (req, res) => {
   const { prompt, model = 'llama3.2', system } = req.body;
@@ -149,7 +179,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`[AppCraft Engine] Microservice active on port ${PORT}`);
 });
