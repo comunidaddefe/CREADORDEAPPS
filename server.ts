@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
-import { GoogleGenAI } from '@google/genai';
 
 export const SUPPORTED_STACKS = [
   'javascript', 'typescript', 'html_css', 'php', 'ruby',
@@ -28,13 +27,16 @@ app.use((req, res, next) => {
   next();
 });
 
+const SOLUSOL_BASE_URL = (process.env.SOLUSOL_API_URL || 'https://api.solusol.net').replace(/\/+$/, '');
+const SOLUSOL_API_KEY = process.env.SOLUSOL_API_KEY || '';
+
 // Health check para el balanceador / gateway
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'appcraft-engine', version: '1.0.0' });
 });
 
 // Telemetría verídica: origen explícito, unidades y estados LIVE, DEMO, NO_DATA, ERROR
-app.get('/api/data', (req, res) => {
+app.get('/api/data', async (req, res) => {
   const rawSource = req.query.source;
   const rawType = req.query.type;
 
@@ -56,6 +58,38 @@ app.get('/api/data', (req, res) => {
 
   // Telemetría genuina de sistema Node.js
   const isSystemSource = source.startsWith('system.') || source.startsWith('runtime.') || source.startsWith('process.');
+
+  // Integración Upstream con api.solusol.net
+  if (source.startsWith('solusol.') || source.startsWith('solusol/')) {
+    const subPath = source.replace(/^solusol[./]/, '');
+    try {
+      const solusolRes = await fetch(`${SOLUSOL_BASE_URL}/telemetry?source=${encodeURIComponent(subPath)}&type=${encodeURIComponent(type)}`, {
+        signal: AbortSignal.timeout(5000),
+        headers: {
+          Accept: 'application/json',
+          ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
+        },
+      });
+
+      if (solusolRes.ok) {
+        const payload = await solusolRes.json();
+        return res.json({
+          origin: 'solusol.cloud',
+          status: 'LIVE',
+          updatedAt,
+          ...payload,
+        });
+      }
+    } catch (err: any) {
+      return res.json({
+        origin: 'solusol.cloud',
+        status: 'ERROR',
+        unit: 'none',
+        updatedAt,
+        description: `Error connecting to upstream api.solusol.net: ${err.message || 'Timeout'}`,
+      });
+    }
+  }
 
   if (isSystemSource) {
     if (type === 'stat') {
@@ -144,15 +178,31 @@ app.get('/api/data', (req, res) => {
   });
 });
 
-const getAiClient = () => {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured in the environment.');
+// Proxy transparente hacia api.solusol.net
+app.all('/api/solusol/*', async (req, res) => {
+  const targetPath = req.params[0] || '';
+  const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const targetUrl = `${SOLUSOL_BASE_URL}/${targetPath}${queryString}`;
+
+  try {
+    const upstreamRes = await fetch(targetUrl, {
+      method: req.method,
+      headers: {
+        'Content-Type': req.headers['content-type'] || 'application/json',
+        ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
+      },
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const contentType = upstreamRes.headers.get('content-type') || 'application/json';
+    res.status(upstreamRes.status).contentType(contentType);
+    const data = await upstreamRes.text();
+    res.send(data);
+  } catch (error: any) {
+    res.status(502).json({ error: 'Failed to proxy request to api.solusol.net', details: error.message });
   }
-  return new GoogleGenAI({
-    apiKey,
-  });
-};
+});
 
 const extractJsonArray = (text: string): string => {
   const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
@@ -168,7 +218,7 @@ const extractCode = (text: string): string => {
 
 // Generación de layout canónico (disponible en /generate y /api/generate-dashboard)
 const handleGenerateLayout = async (req: express.Request, res: express.Response) => {
-  const { prompt, stack = 'typescript' } = req.body || {};
+  const { prompt, stack = 'typescript', provider = 'solusol', model = 'llama3.2' } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'Field "prompt" is required and must be a non-empty string.' });
@@ -184,6 +234,9 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
   {
     "id": "string (uuid-like or slug)",
     "type": "stat" | "bar_chart" | "line_chart" | "table" | "list",
+    "gridPosition": {
+      "colSpan": 1 to 12
+    },
     "props": {
       "title": "string",
       "data_source": "string",
@@ -191,27 +244,64 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
     }
   }`;
 
+  if (provider === 'ollama') {
+    try {
+      const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
+        method: 'POST',
+        signal: AbortSignal.timeout(60000),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          system: systemInstruction,
+          prompt: `Create a dashboard layout array for: "${prompt}". Return ONLY valid JSON array.`,
+          stream: false,
+          format: 'json',
+        }),
+      });
+
+      if (!ollamaResponse.ok) {
+        throw new Error(`Ollama error: ${ollamaResponse.statusText}`);
+      }
+
+      const data = await ollamaResponse.json();
+      const rawText = extractJsonArray(data.response || '[]');
+      const dashboardLayout = JSON.parse(rawText);
+      return res.json(dashboardLayout);
+    } catch (error: any) {
+      return res.status(503).json({
+        error: 'Ollama is unreachable. Ensure Ollama is running on http://localhost:11434.',
+        details: error.message,
+      });
+    }
+  }
+
+  // Motor de IA Cloud: api.solusol.net
   try {
-    const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
+    const upstreamRes = await fetch(`${SOLUSOL_BASE_URL}/api/generate-dashboard`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
       },
+      body: JSON.stringify({ prompt, stack, systemInstruction }),
+      signal: AbortSignal.timeout(30000),
     });
 
-    const rawText = extractJsonArray(response.text || '[]');
-    const dashboardLayout = JSON.parse(rawText);
-    if (!Array.isArray(dashboardLayout)) {
-      return res.status(502).json({ error: 'LLM did not return a valid layout array.' });
+    if (!upstreamRes.ok) {
+      const errorText = await upstreamRes.text();
+      throw new Error(`api.solusol.net returned ${upstreamRes.status}: ${errorText}`);
     }
-    res.json(dashboardLayout);
+
+    const data = await upstreamRes.json();
+    const dashboardLayout = Array.isArray(data) ? data : data.layout;
+    if (!Array.isArray(dashboardLayout)) {
+      return res.status(502).json({ error: 'SoluSol API did not return a valid layout array.' });
+    }
+    return res.json(dashboardLayout);
   } catch (error: any) {
-    console.error('Error generating layout:', error);
-    res.status(500).json({ 
-      error: 'Failed to generate dashboard layout', 
+    console.error('Error generating layout with SoluSol:', error);
+    return res.status(500).json({ 
+      error: 'Failed to generate dashboard layout via api.solusol.net', 
       details: error.message || error 
     });
   }
@@ -222,7 +312,7 @@ app.post('/api/generate-dashboard', handleGenerateLayout);
 
 // Síntesis a código nativo políglota (disponible en /export y /api/export-code)
 const handleExportCode = async (req: express.Request, res: express.Response) => {
-  const { layout, stack = 'typescript', provider = 'gemini', model = 'llama3.2' } = req.body;
+  const { layout, stack = 'typescript', provider = 'solusol', model = 'llama3.2' } = req.body;
 
   if (!SUPPORTED_STACKS.includes(stack as any)) {
     return res.status(400).json({
@@ -285,22 +375,30 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
     }
   }
 
+  // Motor de Síntesis Cloud: api.solusol.net
   try {
-    const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: JSON.stringify(layout, null, 2),
-      config: {
-        systemInstruction,
+    const upstreamRes = await fetch(`${SOLUSOL_BASE_URL}/api/export-code`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
       },
+      body: JSON.stringify({ layout, stack, systemInstruction }),
+      signal: AbortSignal.timeout(45000),
     });
 
-    const code = extractCode(response.text || '');
-    res.json({ code, stack, provider: 'gemini' });
+    if (!upstreamRes.ok) {
+      const errorText = await upstreamRes.text();
+      throw new Error(`api.solusol.net returned ${upstreamRes.status}: ${errorText}`);
+    }
+
+    const data = await upstreamRes.json();
+    const code = typeof data === 'string' ? extractCode(data) : extractCode(data.code || '');
+    return res.json({ code, stack, provider: 'solusol' });
   } catch (error: any) {
-    console.error('Error synthesizing target code:', error);
-    res.status(500).json({ 
-      error: 'Failed to synthesize code for target stack with Gemini',
+    console.error('Error synthesizing code with SoluSol:', error);
+    return res.status(500).json({ 
+      error: 'Failed to synthesize code for target stack via api.solusol.net',
       details: error.message || error
     });
   }

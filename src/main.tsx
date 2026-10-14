@@ -27,12 +27,16 @@ export type LanguageStack =
   | 'cpp' | 'c' | 'zig'
   | 'haskell' | 'erlang' | 'lua' | 'perl' | 'bash';
 
-export type LLMProvider = 'gemini' | 'ollama';
+export type LLMProvider = 'solusol' | 'ollama';
 export type ComponentType = 'stat' | 'bar_chart' | 'line_chart' | 'table' | 'list';
 
 interface DashboardWidget {
   id: string;
   type: ComponentType;
+  gridPosition?: {
+    colSpan: number;
+    rowSpan?: number;
+  };
   props: {
     title: string;
     data_source: string;
@@ -161,13 +165,63 @@ const translations = {
   },
 };
 
-const PALETTE_TEMPLATES: Array<{ type: ComponentType; label: string; defaultProps: DashboardWidget['props'] }> = [
-  { type: 'stat', label: 'Stat Metric', defaultProps: { title: 'Annual Recurring Revenue', value: '$840,200', data_source: 'analytics.arr' } },
-  { type: 'bar_chart', label: 'Bar Chart', defaultProps: { title: 'Monthly Revenue', data_source: 'metrics.monthly_rev' } },
-  { type: 'line_chart', label: 'Trend Graph', defaultProps: { title: 'Daily Active Users', data_source: 'telemetry.dau' } },
-  { type: 'table', label: 'Data Table', defaultProps: { title: 'Recent Orders', data_source: 'orders.table' } },
-  { type: 'list', label: 'Stream Feed', defaultProps: { title: 'System Alerts', data_source: 'logs.stream' } },
+const DASHBOARD_PRESETS: Record<string, { label: string; widgets: DashboardWidget[] }> = {
+  solar: {
+    label: '☀️ Parque Solar SoluSol',
+    widgets: [
+      { id: 'sol_power', type: 'stat', gridPosition: { colSpan: 4 }, props: { title: 'Potencia Activa (kW)', value: '142.8 kW', data_source: 'solusol.telemetry.power' } },
+      { id: 'sol_gen', type: 'bar_chart', gridPosition: { colSpan: 8 }, props: { title: 'Generación Diaria (kWh)', data_source: 'solusol.generation.daily' } },
+      { id: 'sol_inverters', type: 'table', gridPosition: { colSpan: 12 }, props: { title: 'Telemetría de Inversores', data_source: 'solusol.inverters.status' } },
+    ],
+  },
+  runtime: {
+    label: '🖥️ Servidor & Runtime Node',
+    widgets: [
+      { id: 'sys_uptime', type: 'stat', gridPosition: { colSpan: 4 }, props: { title: 'Uptime del Proceso', data_source: 'system.node_uptime' } },
+      { id: 'sys_mem', type: 'stat', gridPosition: { colSpan: 4 }, props: { title: 'Memoria V8 Heap', data_source: 'system.node_memory' } },
+      { id: 'sys_table', type: 'table', gridPosition: { colSpan: 12 }, props: { title: 'Atributos de Arquitectura', data_source: 'system.node_runtime' } },
+    ],
+  },
+  saas: {
+    label: '💼 SaaS & Negocio B2B',
+    widgets: [
+      { id: 'saas_arr', type: 'stat', gridPosition: { colSpan: 3 }, props: { title: 'ARR Global', value: '$1.42M', data_source: 'finance.arr' } },
+      { id: 'saas_rev', type: 'bar_chart', gridPosition: { colSpan: 5 }, props: { title: 'Ingresos Mensuales', data_source: 'sales.revenue' } },
+      { id: 'saas_users', type: 'line_chart', gridPosition: { colSpan: 4 }, props: { title: 'Usuarios Activos (DAU)', data_source: 'telemetry.dau' } },
+      { id: 'saas_acc', type: 'table', gridPosition: { colSpan: 12 }, props: { title: 'Cuentas Clave', data_source: 'crm.accounts' } },
+    ],
+  },
+};
+
+const PALETTE_TEMPLATES: Array<{ type: ComponentType; label: string; defaultColSpan: number; defaultProps: DashboardWidget['props'] }> = [
+  { type: 'stat', label: 'Stat Metric', defaultColSpan: 3, defaultProps: { title: 'Annual Recurring Revenue', value: '$840,200', data_source: 'analytics.arr' } },
+  { type: 'bar_chart', label: 'Bar Chart', defaultColSpan: 6, defaultProps: { title: 'Monthly Revenue', data_source: 'metrics.monthly_rev' } },
+  { type: 'line_chart', label: 'Trend Graph', defaultColSpan: 6, defaultProps: { title: 'Daily Active Users', data_source: 'telemetry.dau' } },
+  { type: 'table', label: 'Data Table', defaultColSpan: 12, defaultProps: { title: 'Recent Orders', data_source: 'orders.table' } },
+  { type: 'list', label: 'Stream Feed', defaultColSpan: 6, defaultProps: { title: 'System Alerts', data_source: 'logs.stream' } },
+  { type: 'stat', label: 'SoluSol Power (Live)', defaultColSpan: 3, defaultProps: { title: 'Active Power (kW)', value: '142.8 kW', data_source: 'solusol.telemetry.power' } },
+  { type: 'bar_chart', label: 'SoluSol Generation', defaultColSpan: 6, defaultProps: { title: 'Solar Output (kWh)', data_source: 'solusol.generation.daily' } },
 ];
+
+const COL_SPAN_CLASSES: Record<number, string> = {
+  1: 'md:col-span-1',
+  2: 'md:col-span-2',
+  3: 'md:col-span-3',
+  4: 'md:col-span-4',
+  5: 'md:col-span-5',
+  6: 'md:col-span-6',
+  7: 'md:col-span-7',
+  8: 'md:col-span-8',
+  9: 'md:col-span-9',
+  10: 'md:col-span-10',
+  11: 'md:col-span-11',
+  12: 'md:col-span-12',
+};
+
+function getColSpanClass(colSpan: number = 4) {
+  const span = Math.min(12, Math.max(1, colSpan));
+  return COL_SPAN_CLASSES[span] || 'md:col-span-4';
+}
 
 function generateId() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -182,21 +236,31 @@ function App() {
       try { return JSON.parse(saved); } catch { /* ignore */ }
     }
     return [
-      { id: generateId(), type: 'stat', props: { title: 'ARR', value: '$1.24M', data_source: 'finance.arr' } },
-      { id: generateId(), type: 'bar_chart', props: { title: 'Growth Q1-Q4', data_source: 'sales.quarterly' } },
-      { id: generateId(), type: 'table', props: { title: 'Top Enterprise Accounts', data_source: 'crm.clients' } },
+      { id: generateId(), type: 'stat', gridPosition: { colSpan: 4 }, props: { title: 'ARR', value: '$1.24M', data_source: 'finance.arr' } },
+      { id: generateId(), type: 'bar_chart', gridPosition: { colSpan: 8 }, props: { title: 'Growth Q1-Q4', data_source: 'sales.quarterly' } },
+      { id: generateId(), type: 'table', gridPosition: { colSpan: 12 }, props: { title: 'Top Enterprise Accounts', data_source: 'crm.clients' } },
     ];
   });
+
+  // Historial de estados para Undo / Redo
+  const [history, setHistory] = useState<DashboardWidget[][]>([dashboard]);
+  const [historyIndex, setHistoryIndex] = useState(0);
 
   const [prompt, setPrompt] = useState('');
   const [targetStack, setTargetStack] = useState<LanguageStack>(() => {
     return (localStorage.getItem('appcraft_stack') as LanguageStack) || 'typescript';
   });
-  const [provider, setProvider] = useState<LLMProvider>('gemini');
+  const [provider, setProvider] = useState<LLMProvider>('solusol');
   const [ollamaModel, setOllamaModel] = useState('llama3.2');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lang, setLang] = useState<'en' | 'es'>('en');
   const [viewMode, setViewMode] = useState<'canvas' | 'code'>('canvas');
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [jsonModalOpen, setJsonModalOpen] = useState(false);
+  const [jsonInput, setJsonInput] = useState('');
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [solusolUrl, setSolusolUrl] = useState(() => localStorage.getItem('appcraft_solusol_url') || 'https://api.solusol.net');
+  const [solusolKey, setSolusolKey] = useState(() => localStorage.getItem('appcraft_solusol_key') || '');
   const [generatedCode, setGeneratedCode] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
@@ -221,6 +285,31 @@ function App() {
   React.useEffect(() => {
     localStorage.setItem('appcraft_dashboard', JSON.stringify(dashboard));
   }, [dashboard]);
+
+  const pushToHistory = (newDashboard: DashboardWidget[]) => {
+    setHistory((prev) => {
+      const updated = prev.slice(0, historyIndex + 1);
+      return [...updated, newDashboard];
+    });
+    setHistoryIndex((prev) => prev + 1);
+    setDashboard(newDashboard);
+  };
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      const nextIndex = historyIndex - 1;
+      setHistoryIndex(nextIndex);
+      setDashboard(history[nextIndex]);
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      const nextIndex = historyIndex + 1;
+      setHistoryIndex(nextIndex);
+      setDashboard(history[nextIndex]);
+    }
+  };
 
   React.useEffect(() => {
     localStorage.setItem('appcraft_stack', targetStack);
@@ -293,14 +382,27 @@ function App() {
     };
   }, [sourcesSignature]);
 
+  // Atajos de teclado para Undo / Redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (e.shiftKey) redo();
+        else undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        redo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [historyIndex, history]);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setDashboard((items) => {
-        const oldIndex = items.findIndex((i) => i.id === active.id);
-        const newIndex = items.findIndex((i) => i.id === over.id);
-        return arrayMove(items, oldIndex, newIndex);
-      });
+      const oldIndex = dashboard.findIndex((i) => i.id === active.id);
+      const newIndex = dashboard.findIndex((i) => i.id === over.id);
+      const updated = arrayMove(dashboard, oldIndex, newIndex);
+      pushToHistory(updated);
     }
   };
 
@@ -314,14 +416,18 @@ function App() {
       const response = await fetch('/api/generate-dashboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, stack: targetStack }),
+        body: JSON.stringify({ prompt, stack: targetStack, provider, model: ollamaModel }),
       });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || 'Failed to generate layout.');
       }
       if (Array.isArray(data)) {
-        setDashboard(data);
+        const normalized = data.map((item: any) => ({
+          ...item,
+          gridPosition: item.gridPosition || { colSpan: item.type === 'table' ? 12 : item.type === 'stat' ? 3 : 6 }
+        }));
+        pushToHistory(normalized);
         setSelectedId(data[0]?.id || null);
       }
     } catch (err: any) {
@@ -358,27 +464,46 @@ function App() {
     }
   };
 
-  const addComponent = (type: ComponentType, defaultProps: DashboardWidget['props']) => {
+  const addComponent = (type: ComponentType, defaultProps: DashboardWidget['props'], defaultColSpan: number = 4) => {
     const newWidget: DashboardWidget = {
       id: generateId(),
       type,
+      gridPosition: { colSpan: defaultColSpan },
       props: { ...defaultProps },
     };
-    setDashboard((prev) => [...prev, newWidget]);
+    pushToHistory([...dashboard, newWidget]);
     setSelectedId(newWidget.id);
+  };
+
+  const duplicateComponent = (widget: DashboardWidget) => {
+    const cloned: DashboardWidget = {
+      ...widget,
+      id: generateId(),
+      props: { ...widget.props, title: `${widget.props.title} (Copy)` },
+      gridPosition: { colSpan: widget.gridPosition?.colSpan || 4 },
+    };
+    pushToHistory([...dashboard, cloned]);
+    setSelectedId(cloned.id);
+  };
+
+  const loadPreset = (presetKey: string) => {
+    const preset = DASHBOARD_PRESETS[presetKey];
+    if (preset) {
+      pushToHistory(preset.widgets.map((w) => ({ ...w, id: generateId() })));
+      setSelectedId(null);
+    }
   };
 
   const updateSelectedProps = (patch: Partial<DashboardWidget['props']>) => {
     if (!selectedId) return;
-    setDashboard((prev) =>
-      prev.map((item) =>
-        item.id === selectedId ? { ...item, props: { ...item.props, ...patch } } : item
-      )
+    const updated = dashboard.map((item) =>
+      item.id === selectedId ? { ...item, props: { ...item.props, ...patch } } : item
     );
+    pushToHistory(updated);
   };
 
   const handleClear = () => {
-    setDashboard([]);
+    pushToHistory([]);
     setSelectedId(null);
     setGeneratedCode('');
     setStatusMessage(null);
@@ -411,7 +536,7 @@ function App() {
               onChange={(e) => setProvider(e.target.value as LLMProvider)}
               className="bg-transparent font-semibold text-slate-800 outline-none cursor-pointer"
             >
-              <option value="gemini">Gemini Flash (Cloud)</option>
+              <option value="solusol">SoluSol Cloud (api.solusol.net)</option>
               <option value="ollama">Ollama (Localhost)</option>
             </select>
             {provider === 'ollama' && (
@@ -446,6 +571,22 @@ function App() {
             </select>
           </div>
 
+          {/* Presets industriales y plantillas rápidas */}
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-md border border-slate-200">
+            <label htmlFor="preset-select" className="text-slate-500 text-[11px] pl-1">Preset:</label>
+            <select
+              id="preset-select"
+              defaultValue=""
+              onChange={(e) => { if (e.target.value) loadPreset(e.target.value); e.target.value = ''; }}
+              className="bg-transparent font-semibold text-slate-800 outline-none cursor-pointer"
+            >
+              <option value="" disabled>Load Template...</option>
+              {Object.entries(DASHBOARD_PRESETS).map(([key, item]) => (
+                <option key={key} value={key}>{item.label}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Mode Switcher */}
           <div className="flex items-center border border-slate-200 rounded-md overflow-hidden bg-slate-100 p-0.5">
             <button
@@ -465,6 +606,43 @@ function App() {
             </button>
           </div>
 
+          {/* Undo / Redo & Kiosk View */}
+          <div className="flex items-center gap-1 border border-slate-200 rounded-md bg-slate-100 p-0.5">
+            <button
+              onClick={undo}
+              disabled={historyIndex <= 0}
+              title="Undo (Ctrl+Z)"
+              className="px-2 py-1 text-xs rounded hover:bg-white text-slate-700 disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              ↺
+            </button>
+            <button
+              onClick={redo}
+              disabled={historyIndex >= history.length - 1}
+              title="Redo (Ctrl+Y)"
+              className="px-2 py-1 text-xs rounded hover:bg-white text-slate-700 disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              ↻
+            </button>
+          </div>
+
+          <button
+            onClick={() => setIsPreviewMode(!isPreviewMode)}
+            className={`px-2.5 py-1 rounded text-xs border transition-colors ${
+              isPreviewMode ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+            }`}
+          >
+            {isPreviewMode ? 'Exit Preview' : 'Preview'}
+          </button>
+
+          <button
+            onClick={() => setSettingsModalOpen(true)}
+            className="px-2 py-1 border border-slate-200 hover:bg-slate-50 rounded text-slate-600 text-xs"
+            title="SoluSol Cloud Settings"
+          >
+            ⚙️
+          </button>
+
           <button
             onClick={() => setLang(lang === 'en' ? 'es' : 'en')}
             className="px-2 py-1 border border-slate-200 rounded text-slate-600 hover:bg-slate-50 uppercase text-xs"
@@ -483,6 +661,12 @@ function App() {
             {isSynthesizing ? 'Synthesizing code...' : t('exportCode')}
           </button>
           <button
+            onClick={() => { setJsonInput(JSON.stringify(dashboard, null, 2)); setJsonModalOpen(true); }}
+            className="px-3 py-1.5 border border-slate-300 hover:border-slate-900 rounded text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            JSON
+          </button>
+          <button
             onClick={handleClear}
             className="px-3 py-1.5 text-xs text-slate-500 hover:text-red-600 transition-colors"
           >
@@ -492,6 +676,7 @@ function App() {
       </header>
 
       {/* Scaffolding Bar */}
+      {!isPreviewMode && (
       <div className="border-b border-slate-200 bg-white px-6 py-3 shrink-0">
         <div className="max-w-6xl mx-auto flex gap-3">
           <input
@@ -516,10 +701,12 @@ function App() {
           </div>
         )}
       </div>
+      )}
 
       {/* Workspace Tripartite Layout */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Component Palette */}
+        {!isPreviewMode && (
         <aside className="w-64 border-r border-slate-200 bg-white p-4 flex flex-col shrink-0 overflow-y-auto">
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
             {t('palette')}
@@ -527,8 +714,8 @@ function App() {
           <div className="flex flex-col gap-2">
             {PALETTE_TEMPLATES.map((item) => (
               <button
-                key={item.type}
-                onClick={() => addComponent(item.type, item.defaultProps)}
+                key={`${item.type}-${item.label}`}
+                onClick={() => addComponent(item.type, item.defaultProps, item.defaultColSpan)}
                 className="group flex flex-col items-start p-3 border border-slate-200 rounded-md hover:border-slate-900 hover:bg-slate-50 transition-all text-left"
               >
                 <span className="text-xs font-semibold text-slate-900">{item.label}</span>
@@ -540,6 +727,7 @@ function App() {
             ))}
           </div>
         </aside>
+        )}
 
         {/* Center: Canvas or Polyglot Target Code */}
         <main className="flex-1 overflow-y-auto p-8">
@@ -553,17 +741,18 @@ function App() {
               ) : (
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext items={dashboard.map((c) => c.id)} strategy={rectSortingStrategy}>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
                       {dashboard.map((comp) => (
                         <SortableWidgetCard
-                        key={comp.id}
+                          key={comp.id}
                           comp={comp}
                           isSelected={comp.id === selectedId}
                           metric={liveMetrics[comp.id]}
                           isLoading={!!loadingMetrics[comp.id]}
                           onSelect={() => setSelectedId(comp.id)}
+                          onDuplicate={() => duplicateComponent(comp)}
                           onDelete={() => {
-                            setDashboard((prev) => prev.filter((c) => c.id !== comp.id));
+                            pushToHistory(dashboard.filter((c) => c.id !== comp.id));
                             if (selectedId === comp.id) setSelectedId(null);
                           }}
                         />
@@ -598,6 +787,7 @@ function App() {
         </main>
 
         {/* Right: Properties Panel */}
+        {!isPreviewMode && (
         <aside className="w-72 border-l border-slate-200 bg-white p-5 flex flex-col shrink-0 overflow-y-auto">
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">
             {t('properties')}
@@ -612,6 +802,43 @@ function App() {
                   onChange={(e) => updateSelectedProps({ title: e.target.value })}
                   className="w-full px-3 py-1.5 border border-slate-200 rounded text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
                 />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-600 font-medium">Grid Width (1-12)</label>
+                  <span className="font-mono text-slate-900 font-semibold">{selectedWidget.gridPosition?.colSpan || 4} cols</span>
+                </div>
+                <div className="grid grid-cols-5 gap-1 text-[11px] font-mono">
+                  {[
+                    { label: '1/4 (3)', span: 3 },
+                    { label: '1/3 (4)', span: 4 },
+                    { label: '1/2 (6)', span: 6 },
+                    { label: '2/3 (8)', span: 8 },
+                    { label: 'Full (12)', span: 12 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.span}
+                      type="button"
+                      onClick={() => {
+                        setDashboard((prev) =>
+                          prev.map((item) =>
+                            item.id === selectedWidget.id
+                              ? { ...item, gridPosition: { ...item.gridPosition, colSpan: preset.span } }
+                              : item
+                          )
+                        );
+                      }}
+                      className={`py-1 px-1 rounded border text-center transition-colors ${
+                        (selectedWidget.gridPosition?.colSpan || 4) === preset.span
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div>
@@ -655,7 +882,114 @@ function App() {
             </p>
           )}
         </aside>
+        )}
       </div>
+
+      {/* Modal de Importación / Exportación JSON */}
+      {jsonModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <h3 className="text-sm font-semibold text-slate-900">Dashboard JSON Schema</h3>
+              <button onClick={() => setJsonModalOpen(false)} className="text-slate-400 hover:text-slate-700 text-sm">✕</button>
+            </div>
+            <textarea
+              rows={14}
+              value={jsonInput}
+              onChange={(e) => setJsonInput(e.target.value)}
+              className="w-full font-mono text-xs p-3 bg-slate-50 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-slate-900 mb-4 leading-relaxed"
+            />
+            <div className="flex justify-between items-center text-xs">
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(jsonInput);
+                    setStatusMessage('JSON copied to clipboard');
+                    setTimeout(() => setStatusMessage(null), 2500);
+                  }}
+                  className="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 rounded text-slate-700"
+                >
+                  Copy JSON
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setJsonModalOpen(false)} className="px-3 py-1.5 text-slate-500 hover:text-slate-800">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    try {
+                      const parsed = JSON.parse(jsonInput);
+                      if (Array.isArray(parsed)) {
+                        pushToHistory(parsed);
+                        setJsonModalOpen(false);
+                      } else {
+                        alert('El JSON debe ser un array de widgets válido.');
+                      }
+                    } catch (e: any) {
+                      alert(`JSON Inválido: ${e.message}`);
+                    }
+                  }}
+                  className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded font-medium"
+                >
+                  Apply JSON
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Configuración SoluSol Cloud (Nivel 2) */}
+      {settingsModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 border border-slate-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <h3 className="text-sm font-semibold text-slate-900">SoluSol Cloud Settings</h3>
+              <button onClick={() => setSettingsModalOpen(false)} className="text-slate-400 hover:text-slate-700 text-sm">✕</button>
+            </div>
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="block text-slate-600 font-medium mb-1">Upstream API URL</label>
+                <input
+                  type="text"
+                  value={solusolUrl}
+                  onChange={(e) => setSolusolUrl(e.target.value)}
+                  placeholder="https://api.solusol.net"
+                  className="w-full px-3 py-2 border border-slate-200 rounded font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-600 font-medium mb-1">Bearer API Token (Optional)</label>
+                <input
+                  type="password"
+                  value={solusolKey}
+                  onChange={(e) => setSolusolKey(e.target.value)}
+                  placeholder="solusol_sec_..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded font-mono"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2 text-xs">
+              <button onClick={() => setSettingsModalOpen(false)} className="px-3 py-1.5 text-slate-500 hover:text-slate-800">
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.setItem('appcraft_solusol_url', solusolUrl);
+                  localStorage.setItem('appcraft_solusol_key', solusolKey);
+                  setSettingsModalOpen(false);
+                  setStatusMessage('SoluSol settings updated');
+                  setTimeout(() => setStatusMessage(null), 2500);
+                }}
+                className="px-4 py-1.5 bg-slate-900 text-white rounded font-medium hover:bg-slate-800"
+              >
+                Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -665,6 +999,7 @@ function SortableWidgetCard({
   isSelected,
   metric,
   isLoading,
+  onDuplicate,
   onSelect,
   onDelete,
 }: {
@@ -672,6 +1007,7 @@ function SortableWidgetCard({
   isSelected: boolean;
   metric: MetricResponse | null | undefined;
   isLoading: boolean;
+  onDuplicate: () => void;
   onSelect: () => void;
   onDelete: () => void;
 }) {
@@ -679,6 +1015,7 @@ function SortableWidgetCard({
     id: comp.id,
   });
 
+  const colSpan = comp.gridPosition?.colSpan || 4;
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -699,7 +1036,7 @@ function SortableWidgetCard({
       ref={setNodeRef}
       style={style}
       onClick={onSelect}
-      className={`relative rounded-lg border bg-white p-5 cursor-pointer transition-all shadow-sm ${
+      className={`col-span-12 ${getColSpanClass(colSpan)} relative rounded-lg border bg-white p-5 cursor-pointer transition-all shadow-sm ${
         isSelected ? 'border-slate-900 ring-1 ring-slate-900' : 'border-slate-200 hover:border-slate-300'
       }`}
     >
@@ -720,15 +1057,27 @@ function SortableWidgetCard({
             <span className="text-[11px] text-slate-400 font-mono">{comp.props.data_source}</span>
           </div>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDuplicate();
+            }}
+            title="Duplicate widget"
+            className="text-slate-400 hover:text-slate-700 text-xs p-1"
+          >
+            ⧉
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
           className="text-slate-400 hover:text-red-600 text-xs p-1"
         >
           ✕
         </button>
+        </div>
       </div>
 
       {comp.type === 'stat' ? (
