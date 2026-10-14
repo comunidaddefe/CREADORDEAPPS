@@ -1,12 +1,20 @@
-# Arquitectura de Interfaz de Usuario y Guía de Componentes: AppCraft
+# Arquitectura de Interfaz de Usuario y Guía de Componentes: CreadorDeApps (AppCraft Engine)
 
-Este documento describe la jerarquía visual, la distribución espacial, los componentes interactivos y las reglas de diseño implementadas en el frontend de AppCraft.
+Este documento describe la jerarquía visual, los modos operativos (Proyecto Multi-Archivo vs. Canvas Visual), los componentes interactivos y las reglas de experiencia de usuario del frontend.
+
+---
+
+## 0. Principios de UI (Zero Trust, Zero Patches, Evidence First)
+
+1. **Zero Trust en Estados Visuales:** La interfaz nunca asume que una fuente está sana. Los estados de conexión son explícitos (`LIVE`, `DEMO`, `NO_DATA`, `ERROR`) y no se inventan métricas ni valores sin declarar.
+2. **Zero Patches en Vistas:** Las vistas de la aplicación corresponden exactamente a los contratos canónicos: `ApplicationProject` se visualiza en un IDE de archivos y comandos; `DashboardWidget` se manipula en el canvas matricial.
+3. **Evidence First en Feedback:** Cada acción del usuario (generación, compilación, copia de código, entrevista) ofrece respuesta visual determinista con trazabilidad de errores sin alertas invasivas.
 
 ---
 
 ## 1. Distribución Espacial de la Interfaz
 
-La interfaz sigue una distribución tripartita con barra de cabecera y barra de scaffolding:
+La interfaz se organiza en una cabecera de control global, barra de scaffolding y espacio de trabajo adaptable según el modo activo:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐

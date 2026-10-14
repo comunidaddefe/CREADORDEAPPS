@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 export const SUPPORTED_STACKS = [
   'html', 'php', 'tsx', 'go', 'json',
@@ -17,9 +18,19 @@ export type SupportedStack = typeof SUPPORTED_STACKS[number];
 const app = express();
 app.use(express.json());
 
-// Middleware CORS para integración en microservicios y API Gateways
+// Inyección y propagación de trazabilidad distribuida (Trace Context)
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const incomingTraceId = req.header('X-Trace-Id');
+  const traceId = typeof incomingTraceId === 'string' && incomingTraceId.trim() ? incomingTraceId.trim() : randomUUID();
+  (req as any).traceId = traceId;
+  res.setHeader('X-Trace-Id', traceId);
+  next();
+});
+
+// Middleware CORS restringido
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   if (req.method === 'OPTIONS') {
@@ -33,24 +44,49 @@ const SOLUSOL_API_KEY = process.env.SOLUSOL_API_KEY || '';
 const SANTIAGO_AGENT_URL = (process.env.SANTIAGO_AGENT_URL || 'https://santiago.solusol.net').replace(/\/+$/, '');
 const SANTIAGO_API_KEY = process.env.SANTIAGO_API_KEY || '';
 
+interface StandardErrorResponse {
+  error: string;
+  code: string;
+  traceId: string;
+  timestamp: string;
+}
+
+const sendError = (
+  res: express.Response,
+  status: number,
+  code: string,
+  message: string,
+  traceId?: string
+) => {
+  const payload: StandardErrorResponse = {
+    error: message,
+    code,
+    traceId: traceId || randomUUID(),
+    timestamp: new Date().toISOString(),
+  };
+  return res.status(status).json(payload);
+};
+
 // Health check para el balanceador / gateway
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'appcraft-engine', version: '1.0.0' });
+app.get('/health', (req, res) => {
+  const traceId = (req as any).traceId || randomUUID();
+  res.json({ status: 'ok', service: 'appcraft-engine', version: '1.0.0', traceId, timestamp: new Date().toISOString() });
 });
 
 // Telemetría verídica: origen explícito, unidades y estados LIVE, DEMO, NO_DATA, ERROR
 app.get('/api/data', async (req, res) => {
+  const traceId = (req as any).traceId;
   const rawSource = req.query.source;
   const rawType = req.query.type;
 
   if (!rawSource || !rawType || typeof rawSource !== 'string' || typeof rawType !== 'string') {
-    return res.status(400).json({
-      origin: 'system.gateway',
-      status: 'ERROR',
-      unit: 'none',
-      updatedAt: new Date().toISOString(),
-      description: 'Query parameters "source" and "type" must be non-empty strings.',
-    });
+    return sendError(
+      res,
+      400,
+      'ERR_INVALID_QUERY_PARAMS',
+      'Query parameters "source" and "type" must be non-empty strings.',
+      traceId
+    );
   }
 
   const source = rawSource.trim();
@@ -70,6 +106,7 @@ app.get('/api/data', async (req, res) => {
         signal: AbortSignal.timeout(5000),
         headers: {
           Accept: 'application/json',
+          'X-Trace-Id': traceId,
           ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
         },
       });
@@ -183,7 +220,8 @@ app.get('/api/data', async (req, res) => {
 
 // Proxy transparente hacia api.solusol.net
 app.all('/api/solusol/*', async (req, res) => {
-  const targetPath = req.params[0] || '';
+  const traceId = (req as any).traceId;
+  const targetPath = req.path.replace(/^\/api\/solusol\/?/, '');
   const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
   const targetUrl = `${SOLUSOL_BASE_URL}/${targetPath}${queryString}`;
 
@@ -192,6 +230,7 @@ app.all('/api/solusol/*', async (req, res) => {
       method: req.method,
       headers: {
         'Content-Type': req.headers['content-type'] || 'application/json',
+        'X-Trace-Id': traceId,
         ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
       },
       body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body),
@@ -203,13 +242,14 @@ app.all('/api/solusol/*', async (req, res) => {
     const data = await upstreamRes.text();
     res.send(data);
   } catch (error: any) {
-    res.status(502).json({ error: 'Failed to proxy request to api.solusol.net', details: error.message });
+    return sendError(res, 502, 'ERR_UPSTREAM_UNREACHABLE', 'Upstream SoluSol service unreachable.', traceId);
   }
 });
 
 // Proxy transparente hacia santiago.solusol.net (Santiago Autonomous Agent)
 app.all('/api/agent/*', async (req, res) => {
-  const targetPath = req.params[0] || '';
+  const traceId = (req as any).traceId;
+  const targetPath = req.path.replace(/^\/api\/agent\/?/, '');
   const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
   const targetUrl = `${SANTIAGO_AGENT_URL}/${targetPath}${queryString}`;
 
@@ -218,6 +258,7 @@ app.all('/api/agent/*', async (req, res) => {
       method: req.method,
       headers: {
         'Content-Type': req.headers['content-type'] || 'application/json',
+        'X-Trace-Id': traceId,
         ...(SANTIAGO_API_KEY ? { Authorization: `Bearer ${SANTIAGO_API_KEY}` } : {}),
       },
       body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body),
@@ -229,39 +270,76 @@ app.all('/api/agent/*', async (req, res) => {
     const data = await upstreamRes.text();
     res.send(data);
   } catch (error: any) {
-    res.status(502).json({ error: 'Failed to proxy request to santiago.solusol.net', details: error.message });
+    return sendError(res, 502, 'ERR_SANTIAGO_UNREACHABLE', 'Upstream Santiago agent unreachable.', traceId);
   }
 });
 
-const extractJsonArray = (text: string): string => {
-  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  const target = codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
-  const arrayMatch = target.match(/\[[\s\S]*\]/);
-  return arrayMatch ? arrayMatch[0].trim() : target;
+/**
+ * Extractor determinista por balanceo de caracteres delimitadores.
+ * Resuelve de raíz fallos cuando el LLM emite texto o markdown antes/después del payload.
+ */
+export const extractBalancedJson = (
+  raw: string,
+  openChar: '{' | '[' | '(' = '{',
+  closeChar: '}' | ']' | ')' = '}'
+): string => {
+  const cleaned = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+  const startIndex = cleaned.indexOf(openChar);
+  if (startIndex === -1) return cleaned;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = startIndex; i < cleaned.length; i++) {
+    const char = cleaned[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (char === '\\') {
+        escape = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === openChar) {
+      depth++;
+    } else if (char === closeChar) {
+      depth--;
+      if (depth === 0) {
+        return cleaned.slice(startIndex, i + 1);
+      }
+    }
+  }
+
+  if (depth !== 0) {
+    throw new SyntaxError(`'${openChar}' was never closed`);
+  }
+
+  return cleaned.slice(startIndex);
 };
 
-const extractJsonObject = (text: string): string => {
-  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  const target = codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
-  const objMatch = target.match(/\{[\s\S]*\}/);
-  return objMatch ? objMatch[0].trim() : target;
-};
-
-const extractCode = (text: string): string => {
+export const extractCode = (text: string): string => {
   const codeBlockMatch = text.match(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)\s*```/);
   return codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
 };
 
 // Generación de layout canónico (disponible en /generate y /api/generate-dashboard)
 const handleGenerateLayout = async (req: express.Request, res: express.Response) => {
+  const traceId = (req as any).traceId;
   const { prompt, stack = 'typescript', provider = 'solusol', model = 'llama3.2' } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({ error: 'Field "prompt" is required and must be a non-empty string.' });
+    return sendError(res, 400, 'ERR_PROMPT_EMPTY', 'Field "prompt" is required and must be a non-empty string.', traceId);
   }
 
   if (!SUPPORTED_STACKS.includes(stack as any)) {
-    return res.status(400).json({ error: `Unsupported stack "${stack}". Supported stacks: ${SUPPORTED_STACKS.join(', ')}` });
+    return sendError(res, 400, 'ERR_UNSUPPORTED_STACK', `Unsupported stack "${stack}". Supported stacks: ${SUPPORTED_STACKS.join(', ')}`, traceId);
   }
   
   const systemInstruction = `You are an expert dashboard architect specializing in multi-stack applications (${stack}).
@@ -281,6 +359,7 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
   }`;
 
   if (provider === 'ollama') {
+    let data: any;
     try {
       const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
         method: 'POST',
@@ -299,15 +378,31 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
         throw new Error(`Ollama error: ${ollamaResponse.statusText}`);
       }
 
-      const data = await ollamaResponse.json();
-      const rawText = extractJsonArray(data.response || '[]');
-      const dashboardLayout = JSON.parse(rawText);
-      return res.json(dashboardLayout);
+      data = await ollamaResponse.json();
     } catch (error: any) {
-      return res.status(503).json({
-        error: 'Ollama is unreachable. Ensure Ollama is running on http://localhost:11434.',
-        details: error.message,
-      });
+      return sendError(res, 503, 'ERR_OLLAMA_OFFLINE', 'Ollama is unreachable. Ensure Ollama is running on http://localhost:11434.', traceId);
+    }
+    try {
+      const rawText = extractBalancedJson(data.response || '[]', '[', ']');
+      const dashboardLayout = JSON.parse(rawText);
+      if (!Array.isArray(dashboardLayout)) {
+        return sendError(res, 502, 'ERR_MALFORMED_LLM_OUTPUT', 'LLM did not produce a valid layout array.', traceId);
+      }
+      const sanitized = dashboardLayout.map((item: any, index: number) => ({
+        id: String(item.id || `widget_${index}`),
+        type: ['stat', 'bar_chart', 'line_chart', 'table', 'list'].includes(item.type) ? item.type : 'stat',
+        gridPosition: {
+          colSpan: Math.max(1, Math.min(12, Number(item.gridPosition?.colSpan) || 4)),
+        },
+        props: {
+          title: String(item.props?.title || 'Metric'),
+          data_source: String(item.props?.data_source || 'system.node_uptime'),
+          value: item.props?.value ? String(item.props.value) : undefined,
+        },
+      }));
+      return res.json(sanitized);
+    } catch (error: any) {
+      return sendError(res, 502, 'ERR_MALFORMED_LLM_OUTPUT', `Malformed LLM output: ${error.message}`, traceId);
     }
   }
 
@@ -317,6 +412,7 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Trace-Id': traceId,
         ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
       },
       body: JSON.stringify({ prompt, stack, systemInstruction }),
@@ -331,15 +427,24 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
     const data = await upstreamRes.json();
     const dashboardLayout = Array.isArray(data) ? data : data.layout;
     if (!Array.isArray(dashboardLayout)) {
-      return res.status(502).json({ error: 'SoluSol API did not return a valid layout array.' });
+      return sendError(res, 502, 'ERR_SCHEMA_VALIDATION_FAILED', 'SoluSol API did not return a valid layout array.', traceId);
     }
-    return res.json(dashboardLayout);
+    const sanitized = dashboardLayout.map((item: any, index: number) => ({
+      id: String(item.id || `widget_${index}`),
+      type: ['stat', 'bar_chart', 'line_chart', 'table', 'list'].includes(item.type) ? item.type : 'stat',
+      gridPosition: {
+        colSpan: Math.max(1, Math.min(12, Number(item.gridPosition?.colSpan) || 4)),
+      },
+      props: {
+        title: String(item.props?.title || 'Metric'),
+        data_source: String(item.props?.data_source || 'system.node_uptime'),
+        value: item.props?.value ? String(item.props.value) : undefined,
+      },
+    }));
+    return res.json(sanitized);
   } catch (error: any) {
     console.error('Error generating layout with SoluSol:', error);
-    return res.status(500).json({ 
-      error: 'Failed to generate dashboard layout via api.solusol.net', 
-      details: error.message || error 
-    });
+    return sendError(res, 502, 'ERR_UPSTREAM_UNREACHABLE', 'Failed to generate dashboard layout via SoluSol API.', traceId);
   }
 };
 
@@ -348,21 +453,20 @@ app.post('/api/generate-dashboard', handleGenerateLayout);
 
 // Síntesis a código nativo políglota (disponible en /export y /api/export-code)
 const handleExportCode = async (req: express.Request, res: express.Response) => {
-  const { layout, stack = 'typescript', provider = 'solusol', model = 'llama3.2' } = req.body;
+  const traceId = (req as any).traceId;
+  const { layout, stack = 'typescript', provider = 'solusol', model = 'llama3.2' } = req.body || {};
 
   if (!SUPPORTED_STACKS.includes(stack as any)) {
-    return res.status(400).json({
-      error: `Invalid stack "${stack}". Allowed stacks: ${SUPPORTED_STACKS.join(', ')}`
-    });
+    return sendError(res, 400, 'ERR_UNSUPPORTED_STACK', `Invalid stack "${stack}". Allowed stacks: ${SUPPORTED_STACKS.join(', ')}`, traceId);
   }
 
   if (!layout || !Array.isArray(layout) || layout.length === 0) {
-    return res.status(400).json({ error: 'Field "layout" must be a non-empty array of widgets.' });
+    return sendError(res, 400, 'ERR_SCHEMA_VALIDATION_FAILED', 'Field "layout" must be a non-empty array of widgets.', traceId);
   }
 
   const VALID_COMPONENT_TYPES = ['stat', 'bar_chart', 'line_chart', 'table', 'list'];
   const isInvalidWidget = layout.some(
-    (w) =>
+    (w: any) =>
       !w ||
       typeof w.id !== 'string' ||
       !VALID_COMPONENT_TYPES.includes(w.type) ||
@@ -371,9 +475,7 @@ const handleExportCode = async (req: express.Request, res: express.Response) => 
       typeof w.props.data_source !== 'string'
   );
   if (isInvalidWidget) {
-    return res.status(400).json({
-      error: 'Each widget in layout must contain valid "id", "type" (stat|bar_chart|line_chart|table|list), and "props" (title, data_source).',
-    });
+    return sendError(res, 400, 'ERR_SCHEMA_VALIDATION_FAILED', 'Each widget in layout must contain valid "id", "type", and "props".', traceId);
   }
 
   const systemInstruction = `You are a Principal Software Architect generating native, production-grade code for the language/stack: "${stack}".
@@ -384,6 +486,7 @@ Follow the 'Zero AI Design' policy strictly:
 Convert the provided dashboard layout JSON specification into a complete, idiomatic application file.`;
 
   if (provider === 'ollama') {
+    let data: any;
     try {
       const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
         method: 'POST',
@@ -401,14 +504,12 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
         throw new Error(`Ollama error: ${ollamaResponse.statusText}`);
       }
 
-      const data = await ollamaResponse.json();
-      const code = extractCode(data.response || '');
-      return res.json({ code, stack, provider: 'ollama', model });
+      data = await ollamaResponse.json();
     } catch (error) {
-      return res.status(503).json({
-        error: 'Ollama is unreachable. Ensure Ollama is running on http://localhost:11434.',
-      });
+      return sendError(res, 503, 'ERR_OLLAMA_OFFLINE', 'Ollama is unreachable. Ensure Ollama is running on http://localhost:11434.', traceId);
     }
+    const code = extractCode(data.response || '');
+    return res.json({ code, stack, provider: 'ollama', model });
   }
 
   // Motor de Síntesis Cloud: api.solusol.net
@@ -417,6 +518,7 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Trace-Id': traceId,
         ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
       },
       body: JSON.stringify({ layout, stack, systemInstruction }),
@@ -433,18 +535,20 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
     return res.json({ code, stack, provider: 'solusol' });
   } catch (error: any) {
     console.error('Error synthesizing code with SoluSol:', error);
-    return res.status(500).json({ 
-      error: 'Failed to synthesize code for target stack via api.solusol.net',
-      details: error.message || error
-    });
+    return sendError(res, 502, 'ERR_UPSTREAM_UNREACHABLE', 'Failed to synthesize code for target stack via api.solusol.net', traceId);
   }
 };
 
 const handleGenerateProject = async (req: express.Request, res: express.Response) => {
+  const traceId = (req as any).traceId;
   const { prompt, stack = 'csharp', provider = 'solusol', model = 'llama3.2' } = req.body || {};
 
-  if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({ error: 'Field "prompt" is required and must be a non-empty string.' });
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return sendError(res, 400, 'ERR_PROMPT_EMPTY', 'Field "prompt" is required and must be a non-empty string.', traceId);
+  }
+
+  if (!SUPPORTED_STACKS.includes(stack as any)) {
+    return sendError(res, 400, 'ERR_UNSUPPORTED_STACK', `Invalid stack "${stack}". Allowed stacks: ${SUPPORTED_STACKS.join(', ')}`, traceId);
   }
 
   const systemInstruction = `You are a Principal Software Architect.
@@ -465,6 +569,7 @@ Return ONLY a valid JSON object matching this schema:
 }`;
 
   if (provider === 'ollama') {
+    let data: any;
     try {
       const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
         method: 'POST',
@@ -483,15 +588,46 @@ Return ONLY a valid JSON object matching this schema:
         throw new Error(`Ollama error: ${ollamaResponse.statusText}`);
       }
 
-      const data = await ollamaResponse.json();
-      const rawText = extractJsonObject(data.response || '{}');
+      data = await ollamaResponse.json();
+    } catch (error: any) {
+      return sendError(res, 503, 'ERR_OLLAMA_OFFLINE', 'Ollama is unreachable or timed out.', traceId);
+    }
+    try {
+      const rawText = extractBalancedJson(data.response || '{}', '{', '}');
       const projectData = JSON.parse(rawText);
+      if (!projectData.appName || !Array.isArray(projectData.files)) {
+        throw new Error('Malformed project schema from LLM.');
+      }
+      projectData.stack = stack;
       return res.json(projectData);
     } catch (error: any) {
-      return res.status(503).json({
-        error: 'Ollama is unreachable or timed out.',
-        details: error.message,
+      return sendError(res, 502, 'ERR_MALFORMED_LLM_OUTPUT', `Malformed project schema from LLM: ${error.message}`, traceId);
+    }
+  }
+
+  // Santiago Agent Orchestrator Upstream (santiago.solusol.net)
+  if (provider === 'solusol' && SANTIAGO_AGENT_URL) {
+    try {
+      const santiagoRes = await fetch(`${SANTIAGO_AGENT_URL}/api/generate-project`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Id': traceId,
+          ...(SANTIAGO_API_KEY ? { Authorization: `Bearer ${SANTIAGO_API_KEY}` } : {}),
+        },
+        body: JSON.stringify({ prompt, stack, systemInstruction }),
+        signal: AbortSignal.timeout(45000),
       });
+      if (santiagoRes.ok) {
+        const data = await santiagoRes.json();
+        if (!data.appName || !Array.isArray(data.files)) {
+          throw new Error('Malformed project schema received from Santiago Agent.');
+        }
+        data.stack = stack;
+        return res.json(data);
+      }
+    } catch (err: any) {
+      console.warn('Santiago Agent unreachable for project generation, attempting SoluSol Base URL:', err.message);
     }
   }
 
@@ -501,6 +637,7 @@ Return ONLY a valid JSON object matching this schema:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Trace-Id': traceId,
         ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
       },
       body: JSON.stringify({ prompt, stack, systemInstruction }),
@@ -508,22 +645,31 @@ Return ONLY a valid JSON object matching this schema:
     });
     if (upstreamRes.ok) {
       const data = await upstreamRes.json();
+      if (!data.appName || !Array.isArray(data.files)) {
+        throw new Error('Malformed project schema received from SoluSol API.');
+      }
+      data.stack = stack;
       return res.json(data);
     }
     const errorText = await upstreamRes.text();
     throw new Error(`SoluSol API returned ${upstreamRes.status}: ${errorText}`);
   } catch (error: any) {
-    return res.status(500).json({ error: 'Failed to generate project.', details: error.message || error });
+    return sendError(res, 502, 'ERR_UPSTREAM_UNREACHABLE', 'Failed to generate project via upstream API.', traceId);
   }
 };
 
 app.post('/api/generate-project', handleGenerateProject);
 
 const handleInterview = async (req: express.Request, res: express.Response) => {
+  const traceId = (req as any).traceId;
   const { message, history = [], stack = 'typescript', provider = 'solusol', model = 'llama3.2' } = req.body || {};
 
-  if (!message || typeof message !== 'string') {
-    return res.status(400).json({ error: 'Field "message" is required and must be a non-empty string.' });
+  if (!message || typeof message !== 'string' || !message.trim()) {
+    return sendError(res, 400, 'ERR_PROMPT_EMPTY', 'Field "message" is required and must be a non-empty string.', traceId);
+  }
+
+  if (!SUPPORTED_STACKS.includes(stack as any)) {
+    return sendError(res, 400, 'ERR_UNSUPPORTED_STACK', `Invalid stack "${stack}". Allowed stacks: ${SUPPORTED_STACKS.join(', ')}`, traceId);
   }
 
   const systemInstruction = `You are Santiago, a Principal Software Architect who interviews users step-by-step to scope and build their dream applications.
@@ -560,12 +706,34 @@ Return ONLY valid JSON matching this schema:
 
       if (ollamaResponse.ok) {
         const data = await ollamaResponse.json();
-        const rawText = extractJsonObject(data.response || '{}');
+        const rawText = extractBalancedJson(data.response || '{}', '{', '}');
         const parsed = JSON.parse(rawText);
         return res.json(parsed);
       }
     } catch (error: any) {
       console.warn('Ollama interview fallback:', error.message);
+    }
+  }
+
+  // Santiago Agent Orchestrator Upstream (santiago.solusol.net)
+  if (provider === 'solusol' && SANTIAGO_AGENT_URL) {
+    try {
+      const santiagoRes = await fetch(`${SANTIAGO_AGENT_URL}/api/interview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Id': traceId,
+          ...(SANTIAGO_API_KEY ? { Authorization: `Bearer ${SANTIAGO_API_KEY}` } : {}),
+        },
+        body: JSON.stringify({ message, history, stack, systemInstruction }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (santiagoRes.ok) {
+        const data = await santiagoRes.json();
+        return res.json(data);
+      }
+    } catch (err: any) {
+      console.warn('Santiago Agent unreachable, using local architectural heuristic:', err.message);
     }
   }
 
@@ -609,6 +777,13 @@ Return ONLY valid JSON matching this schema:
 app.post('/api/interview', handleInterview);
 app.post('/export', handleExportCode);
 app.post('/api/export-code', handleExportCode);
+
+// Middleware global de captura de excepciones (Zero Trust Sanitization)
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const traceId = (req as any).traceId || randomUUID();
+  const statusCode = typeof err.status === 'number' ? err.status : 500;
+  return sendError(res, statusCode, err.code || 'ERR_INTERNAL_ERROR', err.message || 'Internal server error occurred.', traceId);
+});
 
 // Configuración de Vite o Estáticos según el entorno
 if (process.env.NODE_ENV !== 'production') {

@@ -53,6 +53,7 @@ interface GeneratedProjectFile {
 interface GeneratedProject {
   appName: string;
   description: string;
+  stack?: string;
   runCommand: string;
   files: GeneratedProjectFile[];
   readme: string;
@@ -303,6 +304,7 @@ function App() {
   const [viewMode, setViewMode] = useState<'canvas' | 'project' | 'code'>('canvas');
   const [generatedProject, setGeneratedProject] = useState<GeneratedProject | null>(null);
   const [selectedFileIndex, setSelectedFileIndex] = useState<number>(0);
+  const [activeProjectTab, setActiveProjectTab] = useState<'editor' | 'readme'>('editor');
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [jsonModalOpen, setJsonModalOpen] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
@@ -312,7 +314,6 @@ function App() {
   const [interviewInput, setInterviewInput] = useState('');
   const [isInterviewLoading, setIsInterviewLoading] = useState(false);
   const [solusolUrl, setSolusolUrl] = useState(() => localStorage.getItem('appcraft_solusol_url') || 'https://api.solusol.net');
-  const [solusolKey, setSolusolKey] = useState(() => localStorage.getItem('appcraft_solusol_key') || '');
   const [generatedCode, setGeneratedCode] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
@@ -437,6 +438,13 @@ function App() {
   // Atajos de teclado para Undo / Redo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         if (e.shiftKey) redo();
         else undo();
@@ -453,8 +461,10 @@ function App() {
     if (over && active.id !== over.id) {
       const oldIndex = dashboard.findIndex((i) => i.id === active.id);
       const newIndex = dashboard.findIndex((i) => i.id === over.id);
-      const updated = arrayMove(dashboard, oldIndex, newIndex);
-      pushToHistory(updated);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const updated = arrayMove(dashboard, oldIndex, newIndex);
+        pushToHistory(updated);
+      }
     }
   };
 
@@ -512,7 +522,6 @@ function App() {
       }
     } catch (err: any) {
       setStatusMessage(err.message || 'Error generating native app project.');
-      generateDashboard();
     } finally {
       setIsGenerating(false);
     }
@@ -677,7 +686,7 @@ function App() {
             )}
           </div>
 
-          {/* 25-Language Target Stack Selector */}
+          {/* 38-Language Target Stack Selector */}
           <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-md border border-slate-200">
             <label htmlFor="polyglot-stack" className="text-slate-500 text-[11px] pl-1">Stack:</label>
             <select
@@ -914,6 +923,114 @@ function App() {
                 </DndContext>
               )}
             </div>
+          ) : viewMode === 'project' ? (
+            generatedProject ? (
+              <div className="max-w-6xl mx-auto flex flex-col gap-4">
+                <div className="bg-white border border-slate-200 p-5 rounded-lg flex items-center justify-between shadow-xs">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">{generatedProject.appName}</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">{generatedProject.description}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-1.5 rounded-md text-xs font-mono">
+                      <span>▶</span>
+                      <span>{generatedProject.runCommand || 'dotnet run'}</span>
+                    </div>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(generatedProject.runCommand)}
+                      className="text-xs border border-slate-300 hover:bg-slate-50 px-2.5 py-1.5 rounded text-slate-700 font-medium"
+                      title="Copiar comando de ejecución"
+                    >
+                      Copiar comando
+                    </button>
+                    <button
+                      onClick={() => {
+                        const fullDump = JSON.stringify(generatedProject, null, 2);
+                        const blob = new Blob([fullDump], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${generatedProject.appName || 'project'}.manifest.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 px-2.5 py-1.5 rounded font-medium"
+                    >
+                      Exportar Manifest
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 gap-4 h-[580px] bg-slate-900 rounded-lg overflow-hidden border border-slate-800 shadow-lg">
+                  {/* Árbol de Archivos del Proyecto */}
+                  <div className="col-span-3 bg-slate-950/90 border-r border-slate-800 p-3 overflow-y-auto flex flex-col justify-between">
+                    <div>
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-3 px-2">Archivos</span>
+                    <div className="space-y-1">
+                      {generatedProject.files.map((file, idx) => (
+                        <button
+                          key={file.path}
+                          onClick={() => {
+                            setSelectedFileIndex(idx);
+                            setActiveProjectTab('editor');
+                          }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded text-xs font-mono transition-colors truncate ${
+                            selectedFileIndex === idx && activeProjectTab === 'editor'
+                              ? 'bg-slate-800 text-emerald-400 font-semibold'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                          }`}
+                        >
+                          📄 {file.path}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                    {generatedProject.readme && (
+                      <button
+                        onClick={() => setActiveProjectTab('readme')}
+                        className={`w-full text-left px-2.5 py-2 mt-4 rounded text-xs font-sans border transition-colors ${
+                          activeProjectTab === 'readme'
+                            ? 'bg-emerald-950/50 border-emerald-600 text-emerald-300 font-semibold'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        📖 Guía de Compilación (README)
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Visor de Código / Visor de README */}
+                  <div className="col-span-9 flex flex-col overflow-hidden bg-slate-900">
+                    <div className="h-10 border-b border-slate-800 px-4 flex items-center justify-between text-xs text-slate-400 font-mono">
+                      <span>{activeProjectTab === 'editor' ? generatedProject.files[selectedFileIndex]?.path : 'README.md'}</span>
+                      <button
+                        onClick={() => {
+                          const toCopy = activeProjectTab === 'editor'
+                            ? generatedProject.files[selectedFileIndex]?.content || ''
+                            : generatedProject.readme || '';
+                          navigator.clipboard.writeText(toCopy);
+                          setStatusMessage('Contenido copiado al portapapeles');
+                          setTimeout(() => setStatusMessage(null), 2000);
+                        }}
+                        className="text-slate-300 hover:text-white border border-slate-700 hover:border-slate-500 px-2.5 py-0.5 rounded text-[11px] font-sans"
+                      >
+                        Copiar contenido
+                      </button>
+                    </div>
+                    <pre className="flex-1 p-4 overflow-auto font-mono text-xs text-slate-100 whitespace-pre leading-relaxed">
+                      {activeProjectTab === 'editor'
+                        ? generatedProject.files[selectedFileIndex]?.content
+                        : generatedProject.readme}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="max-w-xl mx-auto text-center py-24 text-slate-400">
+                <h3 className="text-base font-semibold text-slate-800 mb-1">Sin proyecto generado</h3>
+                <p className="text-xs text-slate-500">Usa "⚡ Generar App" para crear un proyecto multiarchivo.</p>
+              </div>
+            )
           ) : (
             <div className="max-w-5xl mx-auto bg-slate-900 text-slate-100 p-6 rounded-lg font-mono text-xs overflow-x-auto shadow-lg">
               <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800 text-slate-400">
@@ -1111,16 +1228,6 @@ function App() {
                   className="w-full px-3 py-2 border border-slate-200 rounded font-mono"
                 />
               </div>
-              <div>
-                <label className="block text-slate-600 font-medium mb-1">Bearer API Token (Optional)</label>
-                <input
-                  type="password"
-                  value={solusolKey}
-                  onChange={(e) => setSolusolKey(e.target.value)}
-                  placeholder="solusol_sec_..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded font-mono"
-                />
-              </div>
             </div>
             <div className="mt-6 flex justify-end gap-2 text-xs">
               <button onClick={() => setSettingsModalOpen(false)} className="px-3 py-1.5 text-slate-500 hover:text-slate-800">
@@ -1129,7 +1236,6 @@ function App() {
               <button
                 onClick={() => {
                   localStorage.setItem('appcraft_solusol_url', solusolUrl);
-                  localStorage.setItem('appcraft_solusol_key', solusolKey);
                   setSettingsModalOpen(false);
                   setStatusMessage('SoluSol settings updated');
                   setTimeout(() => setStatusMessage(null), 2500);
@@ -1200,14 +1306,14 @@ function App() {
                       </div>
                     )}
 
-                    {/* Botón de construir cuando las características están listas */}
-                    {msg.refinedPrompt && (
+                    {/* Botón de construir cuando la entrevista confirma que el alcance está definido */}
+                    {msg.isReadyToBuild && msg.refinedPrompt && (
                       <div className="mt-3 pt-3 border-t border-slate-100 flex justify-end">
                         <button
                           onClick={() => {
                             setPrompt(msg.refinedPrompt!);
                             setInterviewModalOpen(false);
-                            generateDashboard();
+                            generateFullApp();
                           }}
                           className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
                         >
@@ -1368,7 +1474,7 @@ function SortableWidgetCard({
             <svg viewBox="0 0 200 60" className="w-full h-24 stroke-slate-800 fill-none">
               <path
                 d={metric.points.reduce((acc, p, idx) => {
-                  const x = Math.round((idx / ((metric.points?.length || 2) - 1)) * 200);
+                  const x = Math.round((idx / Math.max(1, (metric.points?.length || 2) - 1)) * 200);
                   const y = Math.round(55 - (p / 100) * 45);
                   return idx === 0 ? `M ${x} ${y}` : `${acc} L ${x} ${y}`;
                 }, '')}

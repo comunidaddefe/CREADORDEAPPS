@@ -1,6 +1,16 @@
-# AppCraft AI Builder
+# CreadorDeApps (AppCraft Engine)
 
-> An intuitive, SaaS-style visual platform for constructing high-density web dashboards via manual drag-and-drop combined with AI-assisted structural generation and polyglot code synthesis.
+> Motor y entorno para la generación asistida de aplicaciones de software completas multi-archivo, asistido por un copiloto de arquitectura técnica (Santiago) y un diseñador visual de pantallas con telemetría en tiempo real.
+
+---
+
+## Doctrina de Reconstrucción e Ingeniería
+
+Todo el ciclo de vida del software, refactorizaciones y generación de código se rige bajo tres directivas estrictas:
+
+1. **ZERO TRUST:** Validación matemática de esquemas y fronteras. Salidas de LLMs, parámetros de red y proxies upstream son sanitizados y aislados. Cero exposición de secretos o stack traces internos al cliente.
+2. **ZERO PATCHES:** Soluciones de causa raíz en arquitectura y contratos. Prohibición de adaptadores cosméticos, fallbacks silenciosos o bloques `try/catch` vacíos que enmascaren defectos.
+3. **EVIDENCE FIRST:** Comprobación estricta de compilación (`npm run typecheck` y `npm test`), trazabilidad determinista con `traceId` y badges de telemetría sinceros (`LIVE`, `DEMO`, `NO_DATA`, `ERROR`).
 
 ---
 
@@ -8,23 +18,25 @@
 
 * **AI Structural Scaffolding:** Prompt-driven layout generation powered by `api.solusol.net` or local LLMs via Ollama.
 * **Visual Drag & Drop Canvas:** Reorderable, responsive widget layout powered by `@dnd-kit`.
-* **Polyglot Code Synthesis:** Convert visual dashboards directly into production-grade native code across 25 language and framework stacks (React/Next.js, Python/Streamlit, Go, Rust/Tauri, C# WinUI, Flutter, and more).
+* **Polyglot Code Synthesis:** Convert visual dashboards directly into production-grade native code across 38 language and framework stacks (HTML, PHP, TSX, Go, JSON, React/Next.js, Python/Streamlit, Rust/Tauri, C# WinUI, Flutter, and more).
+* **Guided Interview Mode:** Conversational architectural scoping powered by Santiago (`/api/interview`) to refine app features interactively before scaffolding.
 * **Authentic Live Telemetry:** Node.js runtime process telemetry paired with demo and stream fallback modes with visual health indicators (`LIVE`, `DEMO`, `NO_DATA`, `ERROR`).
 * **Zero Boilerplate Prototyping:** Immediate visual feedback with an integrated contextual properties panel for real-time tweaking.
 
 ---
 
-## Supported Stacks (25 Targets)
+## Supported Stacks (38 Targets)
 
 | Category | Technologies |
 |---|---|
-| **Web & Frontend** | TypeScript (React/Next.js), JavaScript (Vue/Svelte), Modern HTML5/CSS, PHP (Laravel), Ruby (Rails) |
+| **Base & Web Direct** | HTML (Standalone), PHP (Vanilla / Laravel), TSX (React Component), Go (Gin / Fiber / CLI), JSON (API Schema) |
+| **Web & Frontend** | TypeScript (React/Next.js), JavaScript (Vue/Svelte), Modern HTML5/CSS, Vue.js (SFC), Svelte / SvelteKit, Ruby (Rails) |
 | **Desktop & Native** | C# (.NET / WinUI 3 & WPF), C++ (Windows SDK / WinUI), Rust (Tauri / Slint) |
-| **Backend & Enterprise** | Go (Gin / Fiber), Java (Spring Boot), Elixir (Phoenix), Scala (Play / Akka) |
-| **Data Science & AI** | Python (Streamlit / FastAPI), R (Shiny), Julia (Genie) |
+| **Backend & Enterprise** | Java (Spring Boot), Kotlin (Ktor / Spring), Scala (Play / Akka), Clojure (Ring), Elixir (Phoenix), Erlang / OTP, F# (.NET) |
+| **Data Science & AI** | Python (Streamlit / FastAPI), R (Shiny), Julia (Genie), SQL (DDL / DML Queries) |
 | **Mobile & Multiplatform** | Dart (Flutter), Swift (SwiftUI), Kotlin (Jetpack Compose) |
-| **Low Level & Systems** | C, Zig |
-| **Functional & Scripting** | Haskell, Erlang / OTP, Lua, Perl, Bash |
+| **Low Level & Systems** | C, Zig, Nim |
+| **Functional & Scripting** | Haskell, OCaml, Lua, Perl, Bash, PowerShell, YAML, Solidity |
 
 ---
 
@@ -73,8 +85,8 @@ Navigate to `http://localhost:3000` to access the visual workspace.
 ### 5. Build for Production
 
 ```bash
-npm run build
-npm start
+npm run build       # Bundles client into dist/
+NODE_ENV=production tsx server.ts
 ```
 
 ---
@@ -86,9 +98,25 @@ CREADORDEAPPS/
 ├── src/
 │   ├── main.tsx        # SPA visual builder, state store & canvas components
 │   └── index.css       # Global styles & Tailwind CSS v4 directives
-├── server.ts           # Express backend proxy for Gemini, Ollama & telemetry
-├── API.md              # Complete API endpoints specification
-├── ARCHITECTURE.md     # System design & component interaction details
+├── electron.cjs        # Windows desktop runtime container (Electron)
+├── build.bat           # Packaging and distribution pipeline script
+├── installer.iss       # Inno Setup Windows installer configuration
+├── server.ts           # Express backend engine, agent proxies & synthesis routes
+├── AGENTE.md           # Santiago Autonomous Agent orchestration protocol
+├── CONTRACTS.md        # Canonical JSON schemas for projects, widgets & APIs
+├── PROJECT.md          # Product vision, architectural pillars & tech stack
+├── UI.md               # Visual workspace, 12-column grid & interaction rules
+├── LEVELS.md           # Escala de madurez técnica y hoja de ruta a Nivel 5
+├── AI DJ.md            # Especificación técnica de streaming y radio web IA
+├── LOGS.md             # Estándar de auditoría, trazabilidad y logs estructurados
+├── AUTONOMA.md         # Motor de ejecución autónoma, sandbox y auto-reparación
+├── ENCORE.md           # Infraestructura de microservicios type-safe y Pub/Sub
+├── STREAMING.md        # Protocolos de streaming en vivo, ducking y Web Audio API
+├── LOG_ERROR.md        # Catálogo de errores, códigos y guías de mitigación
+├── CONNECTION.md       # Matriz de conectividad, proxies, circuit breakers y TLS
+├── SUPPORT.md          # Matriz de soporte técnico, SLAs y runbooks de triage
+├── TREE.md             # Mapeo exhaustivo del árbol de directorios y módulos
+├── HISTORIALDEACTIVIDADES.md # Project evolution journal & milestone log
 ├── package.json        # Dependencies & build scripts
 ├── tsconfig.json       # TypeScript configuration
 └── vite.config.ts      # Vite bundler configuration

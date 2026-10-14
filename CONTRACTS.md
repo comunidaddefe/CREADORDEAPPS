@@ -1,12 +1,62 @@
-# Contratos de Datos e Interfaces: AppCraft
+# Contratos de Datos e Interfaces: CreadorDeApps (AppCraft Engine)
 
-Este documento define formalmente las interfaces tipadas, estructuras JSON y esquemas de validación que gobiernan la comunicación entre la interfaz de usuario, el servidor intermedio, el agente Santiago y las APIs upstream de SoluSol.
+Este documento define formalmente los esquemas canónicos que gobiernan la generación de aplicaciones completas, proyectos multi-archivo, vistas de interfaz y telemetría interactiva.
 
 ---
 
-## 1. Esquema Canónico del Widget (`DashboardWidget`)
+## 0. Política de Gobernanza de Contratos
+* **Zero Trust:** Todo payload entrante y saliente se parsea y valida estructuralmente. Los valores fuera de rango son rechazados con códigos HTTP semánticos (400, 502, 503).
+* **Zero Patches:** Las interfaces son canónicas e invariantes. No se introducen campos temporales ni adaptadores ad-hoc para enmascarar discrepancias entre capas.
+* **Evidence First:** Los tipos declarados en este documento deben ser idénticos a los tipos en TypeScript en `server.ts` y `src/main.tsx`, validados mediante `npm run typecheck`.
 
-Todo componente colocado en el lienzo debe cumplir estrictamente con esta estructura serializable:
+---
+
+## 1. Esquema Canónico de Proyecto de Aplicación (`ApplicationProject`)
+
+Representa una aplicación de software funcional, ejecutable y compilable en cualquiera de los stacks soportados:
+
+```typescript
+export interface ProjectFile {
+  path: string;       // Ruta relativa: "src/Program.cs", "package.json", "main.py"
+  content: string;    // Código fuente completo y ejecutable (Zero AI Design)
+}
+
+export interface ApplicationProject {
+  appName: string;       // Identificador único o slug del proyecto
+  description: string;   // Resumen técnico de la solución
+  stack: string;         // Identificador del lenguaje o framework objetivo
+  runCommand: string;    // Comando exacto para terminal ("dotnet run", "python main.py")
+  files: ProjectFile[];  // Conjunto de archivos necesarios para compilar y ejecutar
+  readme: string;        // Guía de puesta en marcha paso a paso
+}
+```
+
+### Ejemplo JSON de Proyecto Válido
+```json
+{
+  "appName": "MailWatcherDesktop",
+  "description": "Widget de escritorio en C# WinUI para monitoreo local de bandejas de entrada",
+  "stack": "csharp",
+  "runCommand": "dotnet run",
+  "files": [
+    {
+      "path": "MailWatcher.csproj",
+      "content": "<Project Sdk=\"Microsoft.NET.Sdk\">...</Project>"
+    },
+    {
+      "path": "Program.cs",
+      "content": "using System;\nnamespace MailWatcher { ... }"
+    }
+  ],
+  "readme": "1. Ejecutar 'dotnet restore'\n2. Compilar con 'dotnet run'"
+}
+```
+
+---
+
+## 2. Esquema Canónico de Widgets y Vistas de UI (`DashboardWidget`)
+
+Unidad modular de interfaz utilizada dentro del diseñador visual responsivo de 12 columnas:
 
 ```typescript
 export type ComponentType = 'stat' | 'bar_chart' | 'line_chart' | 'table' | 'list';
@@ -48,7 +98,7 @@ export interface DashboardWidget {
 
 ---
 
-## 2. Contrato de Respuesta de Telemetría (`MetricResponse`)
+## 3. Contrato de Telemetría en Vivo (`MetricResponse`)
 
 Devuelto por el endpoint `GET /api/data?source={source}&type={type}` y por `https://api.solusol.net/telemetry`:
 
@@ -69,15 +119,15 @@ export interface MetricResponse {
 
 ---
 
-## 3. Contratos de la API REST
+## 4. Endpoints y Contratos de Servicio
 
-### 3.1 Scaffolding de Layout (`POST /api/generate-dashboard`)
+### 4.1 Scaffolding de Layout (`POST /api/generate-dashboard`)
 
 #### Payload de Entrada
 ```json
 {
   "prompt": "string (obligatorio, no vacío)",
-  "stack": "typescript", // Cualquiera de los 25 stacks soportados
+  "stack": "typescript", // Cualquiera de los 38 stacks soportados
   "provider": "solusol" | "ollama",
   "model": "llama3.2" // Opcional, utilizado si provider === 'ollama'
 }
@@ -97,7 +147,7 @@ export interface MetricResponse {
 
 ---
 
-### 3.2 Exportación de Código Nativo (`POST /api/export-code`)
+### 4.2 Exportación de Código Nativo (`POST /api/export-code`)
 
 #### Payload de Entrada
 ```json
@@ -120,11 +170,83 @@ export interface MetricResponse {
 
 ---
 
-## 4. Reglas de Validación de Entrada
+### 4.3 Generación de Proyecto Multi-Archivo (`POST /api/generate-project`)
+
+#### Payload de Entrada
+```json
+{
+  "prompt": "string (obligatorio, no vacío)",
+  "stack": "csharp",
+  "provider": "solusol" | "ollama",
+  "model": "llama3.2"
+}
+```
+
+#### Respuesta Exitosa (`200 OK`)
+```json
+{
+  "appName": "MailWatcherDesktop",
+  "description": "Widget de escritorio en C# WinUI para monitoreo local de bandejas de entrada",
+  "stack": "csharp",
+  "runCommand": "dotnet run",
+  "files": [
+    { "path": "Program.cs", "content": "..." }
+  ],
+  "readme": "Guía de compilación y ejecución paso a paso"
+}
+```
+
+---
+
+### 4.4 Entrevista Arquitectónica Guiada (`POST /api/interview`)
+
+Permite acotar y definir requisitos de la app mediante diálogo asistido antes de generar el código o layout final.
+
+#### Payload de Entrada
+```json
+{
+  "message": "Quiero una pagina web de una radio por internet",
+  "history": [
+    { "role": "user", "content": "..." },
+    { "role": "assistant", "content": "..." }
+  ],
+  "stack": "html",
+  "provider": "solusol",
+  "model": "llama3.2"
+}
+```
+
+#### Respuesta Exitosa (`200 OK`)
+```json
+{
+  "reply": "¡Me encanta la idea de la radio por internet! Definamos estos 3 detalles clave:",
+  "questions": [
+    "¿Cómo transmitirás el audio?",
+    "¿Qué módulos necesita la interfaz?",
+    "¿Qué estilo visual prefieres?"
+  ],
+  "options": [
+    {
+      "question": "Fuente de Audio",
+      "choices": [
+        "Icecast / Shoutcast (Stream en Vivo)",
+        "Audio HLS / Stream M3U8",
+        "Lista de Reproducción MP3"
+      ]
+    }
+  ],
+  "isReadyToBuild": false,
+  "refinedPrompt": "Sitio web de radio por internet en html con reproductor continuo..."
+}
+```
+
+---
+
+## 5. Reglas de Validación de Entrada
 
 1. **Límites de Grid:** `colSpan` debe ser un número entero acotado entre `1` y `12`.
 2. **Fuentes de Datos:** No se admiten cadenas en blanco. Los prefijos válidos de dominio son:
    * `solusol.*`: Consultas dirigidas a la infraestructura fotovoltaica.
    * `system.*` o `runtime.*`: Telemetría directa del entorno Node.js.
    * Cualquier otro prefijo se marcará con estado `DEMO` o `NO_DATA`.
-3. **Esterilización de Código LLM:** Cualquier bloque markdown que contenga ` ```json ` o ` ``` ` debe ser extraído y depurado con expresiones regulares antes de su renderizado.
+3. **Extracción y Validación de JSON:** Las respuestas de LLM se procesan mediante el extractor determinista por balanceo de caracteres (`extractBalancedJson`), validando la integridad del árbol JSON antes de su entrega.

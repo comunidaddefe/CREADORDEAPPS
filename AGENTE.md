@@ -52,7 +52,8 @@ Santiago dispone del siguiente inventario de herramientas para ejecutar de forma
 |---|---|---|
 | `get_telemetry_schema` | `{ prefix?: string }` | Inspecciona los tipos de métricas y dispositivos activos en `api.solusol.net`. |
 | `validate_widget_layout` | `{ widgets: Widget[] }` | Comprueba que las columnas sumen múltiplos de 12 y cumplan con el esquema canónico. |
-| `synthesize_code` | `{ layout, stack }` | Genera código nativo en cualquiera de los 25 stacks soportados bajo directivas idiomáticas. |
+| `synthesize_code` | `{ layout, stack }` | Genera código nativo en cualquiera de los 38 stacks soportados bajo directivas idiomáticas. |
+| `architectural_interview` | `{ message, history, stack }` | Guía al usuario con preguntas y opciones interactivas para definir requisitos antes de construir. |
 | `check_sensor_health` | `{ device_id: string }` | Verifica si una fuente reporta en vivo o debe inicializarse en modo fallback. |
 
 ---
@@ -95,6 +96,37 @@ Recibe la intención del usuario y devuelve el esquema de widgets resuelto tras 
       }
     }
   ]
+}
+```
+
+---
+
+### 4.2 Entrevista Arquitectónica (`POST /api/interview`)
+Permite a Santiago preguntar interactivamente al usuario antes de ejecutar la síntesis:
+
+```json
+// Request
+{
+  "message": "Quiero una pagina web de una radio por internet",
+  "stack": "html",
+  "history": []
+}
+
+// Response (200 OK)
+{
+  "reply": "Entendido. Para afinar la arquitectura de la radio, define estos puntos:",
+  "questions": [
+    "¿Qué protocolo de audio usarás?",
+    "¿Qué módulos visuales necesitas?"
+  ],
+  "options": [
+    {
+      "question": "Protocolo",
+      "choices": ["Icecast / Shoutcast", "Audio HLS / M3U8", "Playlist Local"]
+    }
+  ],
+  "isReadyToBuild": false,
+  "refinedPrompt": "Sitio web de radio por internet en html con streaming continuo..."
 }
 ```
 
