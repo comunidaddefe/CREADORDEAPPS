@@ -20,12 +20,13 @@ import { CSS } from '@dnd-kit/utilities';
 import './index.css';
 
 export type LanguageStack =
-  | 'javascript' | 'typescript' | 'html_css' | 'php' | 'ruby'
-  | 'java' | 'csharp' | 'go' | 'rust' | 'elixir' | 'scala'
-  | 'python' | 'r' | 'julia'
-  | 'dart' | 'swift' | 'kotlin'
-  | 'cpp' | 'c' | 'zig'
-  | 'haskell' | 'erlang' | 'lua' | 'perl' | 'bash';
+  | 'html' | 'php' | 'tsx' | 'go' | 'json'
+  | 'javascript' | 'typescript' | 'html_css' | 'vue' | 'svelte'
+  | 'csharp' | 'rust' | 'cpp' | 'c' | 'zig' | 'nim'
+  | 'java' | 'kotlin' | 'swift' | 'dart'
+  | 'python' | 'ruby' | 'perl' | 'lua' | 'bash' | 'powershell'
+  | 'elixir' | 'erlang' | 'scala' | 'clojure' | 'haskell' | 'fsharp' | 'ocaml'
+  | 'r' | 'julia' | 'sql' | 'yaml' | 'solidity';
 
 export type LLMProvider = 'solusol' | 'ollama';
 export type ComponentType = 'stat' | 'bar_chart' | 'line_chart' | 'table' | 'list';
@@ -44,6 +45,19 @@ interface DashboardWidget {
   };
 }
 
+interface GeneratedProjectFile {
+  path: string;
+  content: string;
+}
+
+interface GeneratedProject {
+  appName: string;
+  description: string;
+  runCommand: string;
+  files: GeneratedProjectFile[];
+  readme: string;
+}
+
 interface MetricResponse {
   origin: string;
   status: 'LIVE' | 'DEMO' | 'NO_DATA' | 'ERROR';
@@ -57,7 +71,31 @@ interface MetricResponse {
   description?: string;
 }
 
+interface InterviewOption {
+  question: string;
+  choices: string[];
+}
+
+interface InterviewMessage {
+  sender: 'user' | 'santiago';
+  text: string;
+  questions?: string[];
+  options?: InterviewOption[];
+  isReadyToBuild?: boolean;
+  refinedPrompt?: string;
+}
+
 const STACK_CATEGORIES: { name: string; stacks: { id: LanguageStack; label: string }[] }[] = [
+  {
+    name: 'Formatos Base & Web Directa',
+    stacks: [
+      { id: 'html', label: 'HTML (Página / Standalone Web)' },
+      { id: 'php', label: 'PHP (Vanilla / Laravel)' },
+      { id: 'tsx', label: 'TSX (React Component / JSX)' },
+      { id: 'go', label: 'Go (Gin / Fiber / CLI)' },
+      { id: 'json', label: 'JSON (Estructura de Datos / API Schema)' },
+    ],
+  },
   {
     name: 'Windows Desktop & Nativo',
     stacks: [
@@ -72,7 +110,8 @@ const STACK_CATEGORIES: { name: string; stacks: { id: LanguageStack; label: stri
       { id: 'typescript', label: 'TypeScript (React / Next.js)' },
       { id: 'javascript', label: 'JavaScript (Vue / Svelte)' },
       { id: 'html_css', label: 'HTML5 & Modern CSS' },
-      { id: 'php', label: 'PHP (Laravel)' },
+      { id: 'vue', label: 'Vue.js (SFC Component)' },
+      { id: 'svelte', label: 'Svelte / SvelteKit' },
       { id: 'ruby', label: 'Ruby (Rails)' },
     ],
   },
@@ -91,6 +130,7 @@ const STACK_CATEGORIES: { name: string; stacks: { id: LanguageStack; label: stri
       { id: 'python', label: 'Python (Streamlit / FastAPI)' },
       { id: 'r', label: 'R (Shiny)' },
       { id: 'julia', label: 'Julia (Genie)' },
+      { id: 'sql', label: 'SQL (DDL / DML Queries)' },
     ],
   },
   {
@@ -98,7 +138,6 @@ const STACK_CATEGORIES: { name: string; stacks: { id: LanguageStack; label: stri
     stacks: [
       { id: 'dart', label: 'Dart (Flutter Mobile & Multiplatform)' },
       { id: 'swift', label: 'Swift (SwiftUI)' },
-      { id: 'kotlin', label: 'Kotlin (Jetpack Compose)' },
     ],
   },
   {
@@ -106,16 +145,20 @@ const STACK_CATEGORIES: { name: string; stacks: { id: LanguageStack; label: stri
     stacks: [
       { id: 'c', label: 'C' },
       { id: 'zig', label: 'Zig' },
+      { id: 'nim', label: 'Nim' },
     ],
   },
   {
     name: 'Functional & Scripting',
     stacks: [
       { id: 'haskell', label: 'Haskell' },
-      { id: 'erlang', label: 'Erlang / OTP' },
+      { id: 'ocaml', label: 'OCaml' },
       { id: 'lua', label: 'Lua' },
       { id: 'perl', label: 'Perl' },
       { id: 'bash', label: 'Bash (Shell Script)' },
+      { id: 'powershell', label: 'PowerShell (Windows Automation)' },
+      { id: 'yaml', label: 'YAML (Config / Kubernetes)' },
+      { id: 'solidity', label: 'Solidity (Smart Contracts)' },
     ],
   },
 ];
@@ -254,11 +297,17 @@ function App() {
   const [ollamaModel, setOllamaModel] = useState('llama3.2');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lang, setLang] = useState<'en' | 'es'>('en');
-  const [viewMode, setViewMode] = useState<'canvas' | 'code'>('canvas');
+  const [viewMode, setViewMode] = useState<'canvas' | 'project' | 'code'>('canvas');
+  const [generatedProject, setGeneratedProject] = useState<GeneratedProject | null>(null);
+  const [selectedFileIndex, setSelectedFileIndex] = useState<number>(0);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [jsonModalOpen, setJsonModalOpen] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [interviewModalOpen, setInterviewModalOpen] = useState(false);
+  const [interviewHistory, setInterviewHistory] = useState<InterviewMessage[]>([]);
+  const [interviewInput, setInterviewInput] = useState('');
+  const [isInterviewLoading, setIsInterviewLoading] = useState(false);
   const [solusolUrl, setSolusolUrl] = useState(() => localStorage.getItem('appcraft_solusol_url') || 'https://api.solusol.net');
   const [solusolKey, setSolusolKey] = useState(() => localStorage.getItem('appcraft_solusol_key') || '');
   const [generatedCode, setGeneratedCode] = useState<string>('');
@@ -437,6 +486,35 @@ function App() {
     }
   };
 
+  const generateFullApp = async () => {
+    if (!prompt.trim()) return;
+    setIsGenerating(true);
+    setStatusMessage(null);
+    try {
+      const response = await fetch('/api/generate-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, stack: targetStack, provider, model: ollamaModel }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate project.');
+      }
+      if (data && Array.isArray(data.files) && data.files.length > 0) {
+        setGeneratedProject(data);
+        setSelectedFileIndex(0);
+        setViewMode('project');
+      } else {
+        throw new Error('Project response did not contain files.');
+      }
+    } catch (err: any) {
+      setStatusMessage(err.message || 'Error generating native app project.');
+      generateDashboard();
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const synthesizeTargetCode = async () => {
     setIsSynthesizing(true);
     setStatusMessage(null);
@@ -461,6 +539,52 @@ function App() {
       setStatusMessage(err.message || 'Generation error');
     } finally {
       setIsSynthesizing(false);
+    }
+  };
+
+  const sendInterviewMessage = async (textToSend?: string) => {
+    const msg = (textToSend || interviewInput).trim();
+    if (!msg || isInterviewLoading) return;
+
+    const userMsg: InterviewMessage = { sender: 'user', text: msg };
+    const nextHistory = [...interviewHistory, userMsg];
+    setInterviewHistory(nextHistory);
+    setInterviewInput('');
+    setIsInterviewLoading(true);
+
+    try {
+      const res = await fetch('/api/interview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: msg,
+          history: nextHistory.map((m) => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text })),
+          stack: targetStack,
+          provider,
+          model: ollamaModel,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const santiagoMsg: InterviewMessage = {
+          sender: 'santiago',
+          text: data.reply || 'Entendido.',
+          questions: data.questions,
+          options: data.options,
+          isReadyToBuild: data.isReadyToBuild,
+          refinedPrompt: data.refinedPrompt,
+        };
+        setInterviewHistory([...nextHistory, santiagoMsg]);
+      } else {
+        throw new Error(data.error || 'Error en la entrevista');
+      }
+    } catch (err: any) {
+      setInterviewHistory([
+        ...nextHistory,
+        { sender: 'santiago', text: `Lo siento, hubo un problema: ${err.message}` },
+      ]);
+    } finally {
+      setIsInterviewLoading(false);
     }
   };
 
@@ -617,6 +741,12 @@ function App() {
               ↺
             </button>
             <button
+              onClick={() => setViewMode('project')}
+              className={`px-3 py-1 rounded text-xs transition-colors ${viewMode === 'project' ? 'bg-white shadow-sm font-semibold text-slate-900' : 'text-slate-600'}`}
+            >
+              Project
+            </button>
+            <button
               onClick={redo}
               disabled={historyIndex >= history.length - 1}
               title="Redo (Ctrl+Y)"
@@ -687,6 +817,25 @@ function App() {
             placeholder={t('placeholder')}
             className="flex-1 px-3.5 py-2 text-xs border border-slate-200 rounded-md bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 placeholder:text-slate-400"
           />
+          <button
+            onClick={generateFullApp}
+            disabled={isGenerating || !prompt.trim()}
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold rounded-md transition-colors"
+          >
+            {isGenerating ? 'Generando App...' : '⚡ Generar App'}
+          </button>
+          <button
+            onClick={() => {
+              setInterviewModalOpen(true);
+              if (prompt.trim() && interviewHistory.length === 0) {
+                sendInterviewMessage(prompt);
+              }
+            }}
+            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5"
+            title="Conversa con Santiago para definir las características paso a paso"
+          >
+            <span>💬</span> Entrevista Santiago
+          </button>
           <button
             onClick={generateDashboard}
             disabled={isGenerating || !prompt.trim()}
@@ -985,6 +1134,108 @@ function App() {
                 className="px-4 py-1.5 bg-slate-900 text-white rounded font-medium hover:bg-slate-800"
               >
                 Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Entrevista Guiada con Santiago */}
+      {interviewModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full flex flex-col h-[600px] border border-slate-200 overflow-hidden">
+            {/* Header del Chat */}
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">
+                  ST
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Santiago • Arquitecto de Apps</h3>
+                  <p className="text-[11px] text-slate-500">Definiendo características para stack: <span className="font-mono text-indigo-600 font-semibold">{targetStack}</span></p>
+                </div>
+              </div>
+              <button onClick={() => setInterviewModalOpen(false)} className="text-slate-400 hover:text-slate-700 text-sm p-1">✕</button>
+            </div>
+
+            {/* Historial de conversación */}
+            <div className="flex-1 p-5 overflow-y-auto space-y-4 bg-slate-50/50">
+              {interviewHistory.length === 0 && (
+                <div className="text-center py-12 text-slate-400 text-xs">
+                  <p className="text-2xl mb-2">🎙️</p>
+                  <p className="font-semibold text-slate-700">Dime qué aplicación tienes en mente.</p>
+                  <p className="mt-1">Por ejemplo: <em>"Quiero una página web de una radio por internet"</em>.</p>
+                </div>
+              )}
+
+              {interviewHistory.map((msg, i) => (
+                <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                  <div className={`max-w-[85%] rounded-lg p-3 text-xs leading-relaxed ${
+                    msg.sender === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-800 shadow-xs'
+                  }`}>
+                    <p>{msg.text}</p>
+
+                    {/* Opciones interactivas con un clic */}
+                    {msg.options && msg.options.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-100 space-y-2.5">
+                        {msg.options.map((optGroup, gIdx) => (
+                          <div key={gIdx} className="space-y-1">
+                            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">{optGroup.question}</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {optGroup.choices.map((choice, cIdx) => (
+                                <button
+                                  key={cIdx}
+                                  onClick={() => sendInterviewMessage(`Elegí: ${choice}`)}
+                                  className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-medium border border-indigo-200/60 transition-colors"
+                                >
+                                  + {choice}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Botón de construir cuando las características están listas */}
+                    {msg.refinedPrompt && (
+                      <div className="mt-3 pt-3 border-t border-slate-100 flex justify-end">
+                        <button
+                          onClick={() => {
+                            setPrompt(msg.refinedPrompt!);
+                            setInterviewModalOpen(false);
+                            generateDashboard();
+                          }}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+                        >
+                          <span>🚀</span> ¡Construir Aplicación Ahora!
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {isInterviewLoading && (
+                <div className="text-xs text-slate-400 font-mono italic">Santiago está pensando las preguntas técnicas...</div>
+              )}
+            </div>
+
+            {/* Input de respuesta */}
+            <div className="p-3 bg-white border-t border-slate-200 flex gap-2">
+              <input
+                type="text"
+                value={interviewInput}
+                onChange={(e) => setInterviewInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && sendInterviewMessage()}
+                placeholder="Escribe tu idea o responde a las preguntas..."
+                className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-md bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600"
+              />
+              <button
+                onClick={() => sendInterviewMessage()}
+                disabled={isInterviewLoading || !interviewInput.trim()}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-md transition-colors"
+              >
+                Enviar
               </button>
             </div>
           </div>

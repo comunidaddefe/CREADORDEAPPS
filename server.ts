@@ -3,12 +3,13 @@ import express from 'express';
 import path from 'path';
 
 export const SUPPORTED_STACKS = [
-  'javascript', 'typescript', 'html_css', 'php', 'ruby',
-  'java', 'csharp', 'go', 'rust', 'elixir', 'scala',
-  'python', 'r', 'julia',
-  'dart', 'swift', 'kotlin',
-  'cpp', 'c', 'zig',
-  'haskell', 'erlang', 'lua', 'perl', 'bash'
+  'html', 'php', 'tsx', 'go', 'json',
+  'javascript', 'typescript', 'html_css', 'vue', 'svelte',
+  'csharp', 'rust', 'cpp', 'c', 'zig', 'nim',
+  'java', 'kotlin', 'swift', 'dart',
+  'python', 'ruby', 'perl', 'lua', 'bash', 'powershell',
+  'elixir', 'erlang', 'scala', 'clojure', 'haskell', 'fsharp', 'ocaml',
+  'r', 'julia', 'sql', 'yaml', 'solidity'
 ] as const;
 
 export type SupportedStack = typeof SUPPORTED_STACKS[number];
@@ -29,6 +30,8 @@ app.use((req, res, next) => {
 
 const SOLUSOL_BASE_URL = (process.env.SOLUSOL_API_URL || 'https://api.solusol.net').replace(/\/+$/, '');
 const SOLUSOL_API_KEY = process.env.SOLUSOL_API_KEY || '';
+const SANTIAGO_AGENT_URL = (process.env.SANTIAGO_AGENT_URL || 'https://santiago.solusol.net').replace(/\/+$/, '');
+const SANTIAGO_API_KEY = process.env.SANTIAGO_API_KEY || '';
 
 // Health check para el balanceador / gateway
 app.get('/health', (_req, res) => {
@@ -204,11 +207,44 @@ app.all('/api/solusol/*', async (req, res) => {
   }
 });
 
+// Proxy transparente hacia santiago.solusol.net (Santiago Autonomous Agent)
+app.all('/api/agent/*', async (req, res) => {
+  const targetPath = req.params[0] || '';
+  const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const targetUrl = `${SANTIAGO_AGENT_URL}/${targetPath}${queryString}`;
+
+  try {
+    const upstreamRes = await fetch(targetUrl, {
+      method: req.method,
+      headers: {
+        'Content-Type': req.headers['content-type'] || 'application/json',
+        ...(SANTIAGO_API_KEY ? { Authorization: `Bearer ${SANTIAGO_API_KEY}` } : {}),
+      },
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const contentType = upstreamRes.headers.get('content-type') || 'application/json';
+    res.status(upstreamRes.status).contentType(contentType);
+    const data = await upstreamRes.text();
+    res.send(data);
+  } catch (error: any) {
+    res.status(502).json({ error: 'Failed to proxy request to santiago.solusol.net', details: error.message });
+  }
+});
+
 const extractJsonArray = (text: string): string => {
   const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   const target = codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
   const arrayMatch = target.match(/\[[\s\S]*\]/);
   return arrayMatch ? arrayMatch[0].trim() : target;
+};
+
+const extractJsonObject = (text: string): string => {
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  const target = codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
+  const objMatch = target.match(/\{[\s\S]*\}/);
+  return objMatch ? objMatch[0].trim() : target;
 };
 
 const extractCode = (text: string): string => {
@@ -404,6 +440,173 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
   }
 };
 
+const handleGenerateProject = async (req: express.Request, res: express.Response) => {
+  const { prompt, stack = 'csharp', provider = 'solusol', model = 'llama3.2' } = req.body || {};
+
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ error: 'Field "prompt" is required and must be a non-empty string.' });
+  }
+
+  const systemInstruction = `You are a Principal Software Architect.
+Generate a complete, production-grade, compilable multi-file project for the requested native or desktop application in stack: "${stack}".
+Zero AI Design Policy:
+1. No placeholder comments, no fake "// TODO". Write complete functional implementation.
+2. Provide all essential files required to compile and run.
+3. Provide the exact compilation/run terminal command.
+Return ONLY a valid JSON object matching this schema:
+{
+  "appName": "string",
+  "description": "string",
+  "runCommand": "string",
+  "files": [
+    { "path": "string", "content": "string" }
+  ],
+  "readme": "string"
+}`;
+
+  if (provider === 'ollama') {
+    try {
+      const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
+        method: 'POST',
+        signal: AbortSignal.timeout(90000),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          system: systemInstruction,
+          prompt: `Create a runnable project in ${stack} for: "${prompt}". Return ONLY valid JSON object.`,
+          stream: false,
+          format: 'json',
+        }),
+      });
+
+      if (!ollamaResponse.ok) {
+        throw new Error(`Ollama error: ${ollamaResponse.statusText}`);
+      }
+
+      const data = await ollamaResponse.json();
+      const rawText = extractJsonObject(data.response || '{}');
+      const projectData = JSON.parse(rawText);
+      return res.json(projectData);
+    } catch (error: any) {
+      return res.status(503).json({
+        error: 'Ollama is unreachable or timed out.',
+        details: error.message,
+      });
+    }
+  }
+
+  // Fallback / SoluSol Cloud
+  try {
+    const upstreamRes = await fetch(`${SOLUSOL_BASE_URL}/api/generate-project`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(SOLUSOL_API_KEY ? { Authorization: `Bearer ${SOLUSOL_API_KEY}` } : {}),
+      },
+      body: JSON.stringify({ prompt, stack, systemInstruction }),
+      signal: AbortSignal.timeout(45000),
+    });
+    if (upstreamRes.ok) {
+      const data = await upstreamRes.json();
+      return res.json(data);
+    }
+    const errorText = await upstreamRes.text();
+    throw new Error(`SoluSol API returned ${upstreamRes.status}: ${errorText}`);
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Failed to generate project.', details: error.message || error });
+  }
+};
+
+app.post('/api/generate-project', handleGenerateProject);
+
+const handleInterview = async (req: express.Request, res: express.Response) => {
+  const { message, history = [], stack = 'typescript', provider = 'solusol', model = 'llama3.2' } = req.body || {};
+
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'Field "message" is required and must be a non-empty string.' });
+  }
+
+  const systemInstruction = `You are Santiago, a Principal Software Architect who interviews users step-by-step to scope and build their dream applications.
+When a user proposes an app idea (like an internet radio website, desktop watcher, SaaS, etc.):
+1. Acknowledge the idea enthusiastically with strong domain competence.
+2. Ask 2-3 high-impact clarifying questions (audio streaming protocol, persistent player, schedule grid, live chat, theme, etc.).
+3. Provide structured multi-choice options for each question so the user can click them easily.
+4. If the user provided enough details or says "construyela", set "isReadyToBuild": true and provide a refinedPrompt summarizing all features.
+Return ONLY valid JSON matching this schema:
+{
+  "reply": "string (friendly Spanish conversational explanation)",
+  "questions": ["string", "string"],
+  "options": [
+    { "question": "string", "choices": ["Opción 1", "Opción 2", "Opción 3"] }
+  ],
+  "isReadyToBuild": boolean,
+  "refinedPrompt": "string (detailed specification ready to generate the app)"
+}`;
+
+  if (provider === 'ollama') {
+    try {
+      const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
+        method: 'POST',
+        signal: AbortSignal.timeout(60000),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          system: systemInstruction,
+          prompt: `User history: ${JSON.stringify(history)}\nUser input: "${message}". Target stack: "${stack}". Return ONLY valid JSON.`,
+          stream: false,
+          format: 'json',
+        }),
+      });
+
+      if (ollamaResponse.ok) {
+        const data = await ollamaResponse.json();
+        const rawText = extractJsonObject(data.response || '{}');
+        const parsed = JSON.parse(rawText);
+        return res.json(parsed);
+      }
+    } catch (error: any) {
+      console.warn('Ollama interview fallback:', error.message);
+    }
+  }
+
+  // Heurística de fallback contextual para ideas comunes (como radio web, monitores, etc.)
+  const lowerMsg = message.toLowerCase();
+  if (lowerMsg.includes('radio') || lowerMsg.includes('musica') || lowerMsg.includes('audio') || lowerMsg.includes('stream')) {
+    return res.json({
+      reply: '¡Me encanta la idea de la radio por internet! Para que la aplicación quede lista para emitir, definamos estos 3 detalles clave:',
+      questions: [
+        '¿Cómo transmitirás el audio?',
+        '¿Qué módulos necesita la interfaz?',
+        '¿Qué estilo visual prefieres?'
+      ],
+      options: [
+        { question: 'Fuente de Audio', choices: ['Icecast / Shoutcast (Stream en Vivo)', 'Audio HLS / Stream M3U8', 'Lista de Reproducción MP3'] },
+        { question: 'Módulos de la Web', choices: ['Reproductor Sticky + Ahora Sonando', 'Parrilla Semanal de Locutores', 'Chat / Mensajes de Oyentes'] },
+        { question: 'Tema Visual', choices: ['Oscuro Neón (Cabina DJ)', 'Minimalista Moderno', 'Retro Vintage Radio'] }
+      ],
+      isReadyToBuild: false,
+      refinedPrompt: `Sitio web de radio por internet en ${stack} con reproductor de audio continuo sin cortes, visualizador de ondas sonoras, metadata del tema actual (Ahora sonando), parrilla de locutores y chat en vivo.`
+    });
+  }
+
+  return res.json({
+    reply: `Entendido: quieres desarrollar "${message}". Para afinar la arquitectura en ${stack}, indícame tus preferencias:`,
+    questions: [
+      '¿Cuál será la fuente de datos principal?',
+      '¿Qué componentes interactivos debe tener la pantalla?',
+      '¿Cómo debe actualizarse la información?'
+    ],
+    options: [
+      { question: 'Fuente de Datos', choices: ['API REST / JSON', 'WebSockets en Vivo', 'Archivos Locales'] },
+      { question: 'Componentes', choices: ['Dashboard de Métricas', 'Tablas y Filtros', 'Formularios y Acciones'] },
+      { question: 'Actualización', choices: ['Tiempo Real (Polling/SSE)', 'Bajo Demanda (Botón Recargar)'] }
+    ],
+    isReadyToBuild: false,
+    refinedPrompt: `Aplicación en ${stack} para: ${message} con arquitectura modular, componentes desacoplados y estados de contingencia.`
+  });
+};
+
+app.post('/api/interview', handleInterview);
 app.post('/export', handleExportCode);
 app.post('/api/export-code', handleExportCode);
 
