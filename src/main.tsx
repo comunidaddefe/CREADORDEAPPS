@@ -118,10 +118,13 @@ const STACK_CATEGORIES: { name: string; stacks: { id: LanguageStack; label: stri
   {
     name: 'Backend & Enterprise',
     stacks: [
-      { id: 'go', label: 'Go (Gin / Fiber)' },
       { id: 'java', label: 'Java (Spring Boot)' },
-      { id: 'elixir', label: 'Elixir (Phoenix)' },
+      { id: 'kotlin', label: 'Kotlin (Ktor / Spring)' },
       { id: 'scala', label: 'Scala (Play / Akka)' },
+      { id: 'clojure', label: 'Clojure (Ring / Compojure)' },
+      { id: 'elixir', label: 'Elixir (Phoenix)' },
+      { id: 'erlang', label: 'Erlang / OTP' },
+      { id: 'fsharp', label: 'F# (.NET Functional)' },
     ],
   },
   {
@@ -720,6 +723,12 @@ function App() {
               {t('viewCanvas')}
             </button>
             <button
+              onClick={() => setViewMode('project')}
+              className={`px-3 py-1 rounded text-xs transition-colors ${viewMode === 'project' ? 'bg-white shadow-sm font-semibold text-slate-900' : 'text-slate-600'}`}
+            >
+              Project (App)
+            </button>
+            <button
               onClick={() => {
                 if (!generatedCode) synthesizeTargetCode();
                 else setViewMode('code');
@@ -739,12 +748,6 @@ function App() {
               className="px-2 py-1 text-xs rounded hover:bg-white text-slate-700 disabled:opacity-30 disabled:hover:bg-transparent"
             >
               ↺
-            </button>
-            <button
-              onClick={() => setViewMode('project')}
-              className={`px-3 py-1 rounded text-xs transition-colors ${viewMode === 'project' ? 'bg-white shadow-sm font-semibold text-slate-900' : 'text-slate-600'}`}
-            >
-              Project
             </button>
             <button
               onClick={redo}
