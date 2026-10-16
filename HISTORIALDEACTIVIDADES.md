@@ -118,3 +118,22 @@ Querido Diario:
 4. **Pruebas y Tipos:** `npm run typecheck` finalizado con 0 errores y 0 advertencias.
 
 *Subiendo a GitHub con la frente en alto y la rama principal impecable.* 💅✨
+
+---
+
+## 🔒 Entrada 9: "El Gran Blindaje: Auditoría Externa y Autonomía Total"
+
+Querido Diario:
+
+¡Nos cayó una auditoría técnica súper exigente con lupa en mano y nos marcó los puntos débiles sin anestesia! Detectaron que el instalador dependía de un servidor externo en ejecución y que los proxies necesitaban autenticación efectiva más allá de CORS. Así que aplicamos la doctrina Zero Patches de raíz:
+
+1. **Electron 100% Autónomo:**
+   * `electron.cjs` ahora inicia el backend empaquetado en segundo plano utilizando el propio runtime de Electron (`ELECTRON_RUN_AS_NODE: '1'`), monitorea `/health` por loopback hasta verificar disponibilidad y apaga el subproceso limpiamente al cerrar la aplicación.
+2. **Autorización Fail-Closed en Proxies:**
+   * Eliminamos el comodín `*` en CORS y restringimos los orígenes. Implementamos validación obligatoria con clave efímera por sesión (`APP_INTERNAL_SECRET` / `X-App-Internal-Key`), inyectada exclusivamente desde el `webContents.id` de la ventana principal de Electron. Sin token válido, las llamadas a `/api/solusol/*` y `/api/agent/*` reciben `403 Forbidden`.
+3. **Bundle de Servidor Independiente (`server.cjs`):**
+   * Integramos `esbuild` en `package.json` (`npm run build:server`) excluyendo dependencias de desarrollo (`vite`, `electron`) y adaptando `server.ts` con arranque asíncrono para ejecutar sin dependencias de desarrollo en el equipo destino.
+4. **Empaquetado y Control de Artefactos:**
+   * Actualizamos `installer.iss` para incluir `server.cjs` y aislamos `dist-server/` y `dist-installer/` en `.gitignore`.
+
+*Ahora sí: código blindado, documentado y listo para sincronizar.* 💅✨
