@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'node:fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
 
@@ -28,16 +29,41 @@ app.use((req, res, next) => {
 });
 
 // Middleware CORS restringido
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
+const defaultAllowedOrigins = ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000'];
+const configuredOrigin = process.env.ALLOWED_ORIGIN ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim()) : [];
+const allowedOrigins = new Set([...defaultAllowedOrigins, ...configuredOrigin]);
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.has(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  } else if (!origin) {
+    // Peticiones same-origin o herramientas directas: no inyectar cabeceras CORS innecesarias
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+    return res.sendStatus(204);
   }
   next();
 });
+
+const INTERNAL_API_SECRET = process.env.APP_INTERNAL_SECRET || '';
+
+/**
+ * Middleware de autorización real para rutas sensibles y proxies (Zero Trust).
+ * Fail-closed: si no hay secreto configurado o no coincide la clave interna, se bloquea la solicitud.
+ */
+const requireProxyAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const traceId = (req as any).traceId;
+  const providedAuth = req.header('X-App-Internal-Key') || req.header('Authorization')?.replace(/^Bearer\s+/i, '');
+
+  if (!INTERNAL_API_SECRET || !providedAuth || providedAuth !== INTERNAL_API_SECRET) {
+    return sendError(res, 403, 'ERR_UNAUTHORIZED_PROXY_ACCESS', 'Acceso no autorizado al servicio proxy. Requiere clave de sesion valida.', traceId);
+  }
+  next();
+};
 
 const SOLUSOL_BASE_URL = (process.env.SOLUSOL_API_URL || 'https://api.solusol.net').replace(/\/+$/, '');
 const SOLUSOL_API_KEY = process.env.SOLUSOL_API_KEY || '';
@@ -219,7 +245,7 @@ app.get('/api/data', async (req, res) => {
 });
 
 // Proxy transparente hacia api.solusol.net
-app.all('/api/solusol/*', async (req, res) => {
+app.all('/api/solusol/*', requireProxyAuth, async (req, res) => {
   const traceId = (req as any).traceId;
   const targetPath = req.path.replace(/^\/api\/solusol\/?/, '');
   const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
@@ -247,7 +273,7 @@ app.all('/api/solusol/*', async (req, res) => {
 });
 
 // Proxy transparente hacia santiago.solusol.net (Santiago Autonomous Agent)
-app.all('/api/agent/*', async (req, res) => {
+app.all('/api/agent/*', requireProxyAuth, async (req, res) => {
   const traceId = (req as any).traceId;
   const targetPath = req.path.replace(/^\/api\/agent\/?/, '');
   const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
@@ -786,29 +812,42 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 });
 
 // Configuración de Vite o Estáticos según el entorno
-if (process.env.NODE_ENV !== 'production') {
-  const { createServer } = await import('vite');
-  const vite = await createServer({
-    server: {
-      middlewareMode: true,
-      watch: {
-        usePolling: true,
-        interval: 100,
+async function startServer() {
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer } = await import('vite');
+    const vite = await createServer({
+      server: {
+        middlewareMode: true,
+        watch: {
+          usePolling: true,
+          interval: 100,
+        },
       },
-    },
-    appType: 'spa',
-  });
-  app.use(vite.middlewares);
-} else {
-  const clientDist = path.resolve(process.cwd(), 'dist');
-  app.use(express.static(clientDist));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'));
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const baseDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+    const candidatePaths = [
+      path.resolve(baseDir, 'dist'),
+      path.resolve(baseDir, '..', 'dist'),
+      path.resolve(process.cwd(), 'dist'),
+    ];
+    const clientDist = candidatePaths.find((p) => fs.existsSync(p)) || candidatePaths[0];
+    app.use(express.static(clientDist));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(clientDist, 'index.html'));
+    });
+  }
+
+  const HOST = process.env.HOST || '127.0.0.1';
+  const PORT = Number(process.env.PORT) || 3000;
+  app.listen(PORT, HOST, () => {
+    console.log(`[AppCraft Engine] Microservice active on http://${HOST}:${PORT}`);
   });
 }
 
-
-const PORT = Number(process.env.PORT) || 3000;
-app.listen(PORT, () => {
-  console.log(`[AppCraft Engine] Microservice active on port ${PORT}`);
+startServer().catch((err) => {
+  console.error('[AppCraft Engine] Fatal startup error:', err);
+  process.exit(1);
 });

@@ -42,6 +42,7 @@ Source: "node_modules\electron\dist\*"; DestDir: "{app}"; Flags: ignoreversion r
 ; Recursos de la aplicación
 Source: "electron.cjs"; DestDir: "{app}\resources\app"; Flags: ignoreversion
 Source: "package.json"; DestDir: "{app}\resources\app"; Flags: ignoreversion
+Source: "dist-server\server.cjs"; DestDir: "{app}\resources\app"; Flags: ignoreversion
 Source: "dist\*"; DestDir: "{app}\resources\app\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

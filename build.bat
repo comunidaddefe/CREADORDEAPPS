@@ -31,10 +31,14 @@ echo      Tipos validados: 0 errores.
 echo.
 
 :: Paso 3: Compilacion del bundle de produccion
-echo [2/4] Generando bundle de produccion (vite build)...
+echo [2/4] Generando bundles de produccion (cliente Vite + servidor esbuild)...
 call npm run build
 if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Fallo en la compilacion de Vite.
+    echo [ERROR] Fallo en la compilacion de Vite o esbuild.
+    exit /b 1
+)
+if not exist "dist-server\server.cjs" (
+    echo [ERROR] No se genero dist-server\server.cjs. Abortando.
     exit /b 1
 )
 echo      Artefactos generados correctamente en dist\
