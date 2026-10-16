@@ -48,6 +48,10 @@ Todo desarrollo y refactorización en el repositorio se rige por tres directivas
 CREADORDEAPPS/
 ├── src/
 │   ├── main.tsx          # Punto de entrada de UI, lienzo interactivo y estado
+│   ├── server/           # Módulos puros desacoplados del runtime HTTP
+│   │   ├── project-validation.ts # Validador canónico de rutas y cuotas
+│   │   ├── proxy-policy.ts       # Lista blanca de endpoints upstream
+│   │   └── extraction.ts         # Extractor determinista por balanceo
 │   └── index.css         # Directivas globales y configuración Tailwind CSS v4
 ├── test/
 │   ├── auth.test.ts      # Pruebas unitarias de autorización fail-closed y proxies

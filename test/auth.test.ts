@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ALLOWED_SOLUSOL_ROUTES, ALLOWED_AGENT_ROUTES } from './src/server/proxy-policy.ts';
+import { ALLOWED_SOLUSOL_ROUTES, ALLOWED_AGENT_ROUTES } from '../src/server/proxy-policy.ts';
 
 test('Proxy Security Policy - SoluSol allowed endpoints and methods', () => {
   assert.equal(ALLOWED_SOLUSOL_ROUTES.has('telemetry'), true);
@@ -10,6 +10,10 @@ test('Proxy Security Policy - SoluSol allowed endpoints and methods', () => {
   assert.equal(ALLOWED_SOLUSOL_ROUTES.has('api/generate-project'), true);
   assert.equal(ALLOWED_SOLUSOL_ROUTES.get('api/generate-project')?.has('POST'), true);
   assert.equal(ALLOWED_SOLUSOL_ROUTES.get('api/generate-project')?.has('GET'), false);
+
+  assert.equal(ALLOWED_SOLUSOL_ROUTES.has('api/generate-dashboard'), true);
+  assert.equal(ALLOWED_SOLUSOL_ROUTES.get('api/generate-dashboard')?.has('POST'), true);
+  assert.equal(ALLOWED_SOLUSOL_ROUTES.has('api/export-code'), true);
 
   assert.equal(ALLOWED_SOLUSOL_ROUTES.has('forbidden/endpoint'), false);
 });

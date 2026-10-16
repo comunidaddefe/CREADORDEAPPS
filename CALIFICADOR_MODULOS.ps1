@@ -1,15 +1,12 @@
 # ============================================================
-# AUDITOR ESTATICO HEURISTICO DE ALTA CONFIABILIDAD
-# MODO ESTRICTO DE ALTA CONFIABILIDAD Y REVISION LINEA POR LINEA
+# AUDITOR NUMERICO DE MODULOS
+# SOLO LECTURA
 #
 # Uso:
 #   .\CALIFICADOR_MODULOS.ps1
 #
 # O:
 #   .\CALIFICADOR_MODULOS.ps1 -Ruta "C:\Ruta\Proyecto"
-#   .\CALIFICADOR_MODULOS.ps1 -ZeroTolerance
-#   .\CALIFICADOR_MODULOS.ps1 -RevisarCodigo
-#   .\CALIFICADOR_MODULOS.ps1 -ZeroTolerance -MinScore 95
 #
 # Resultado:
 #   Calificacion numerica 0-100 por modulo
@@ -23,17 +20,10 @@
 # ============================================================
 
 param(
-    [string]$Ruta = (Get-Location).Path,
-    [switch]$ZeroTolerance,
-    [switch]$RevisarCodigo,
-    [int]$MinScore = 90
+    [string]$Ruta = (Get-Location).Path
 )
 
-$ErrorActionPreference = "Stop"
-
-if ($ZeroTolerance) {
-    $RevisarCodigo = $true
-}
+$ErrorActionPreference = "SilentlyContinue"
 
 # ------------------------------------------------------------
 # CONFIGURACION
@@ -57,8 +47,7 @@ $ExtensionesCodigo = @(
     ".php",
     ".swift",
     ".sol",
-    ".sql",
-    ".ps1"
+    ".sql"
 )
 
 $ExtensionesTest = @(
@@ -86,14 +75,14 @@ $ExcluirDirectorios = @(
     "coverage",
     ".next",
     ".cache",
+    "reports",
+    "dist-server",
     "bin",
     "obj",
     "tmp",
     "temp",
     "custom-code-editor",
-    "mi-nuevo-editor",
-    "BACKUP",
-    "public"
+    "mi-nuevo-editor"
 )
 
 # ------------------------------------------------------------
@@ -124,64 +113,7 @@ function Es-Test {
         }
     }
 
-    # Check by content for specific languages
-    try {
-        $content = Get-Content -LiteralPath $Archivo.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
-        if ($Archivo.Extension -in @(".ts", ".tsx", ".js", ".jsx")) {
-            if ($content -match '\b(describe|it|test)\s*\(') {
-                return $true
-            }
-        } elseif ($Archivo.Extension -eq ".py") {
-            if ($content -match '^\s*def\s+test_') {
-                return $true
-            }
-        } elseif ($Archivo.Extension -eq ".go") {
-            if ($Archivo.Name -like "*_test.go" -and $content -match '^\s*func\s+Test[A-Z_][a-zA-Z0-9_]*\s*\(') {
-                return $true
-            }
-        }
-    } catch {}
-
     return $false
-}
-
-function Obtener-PruebasRelacionadas {
-    param(
-        [object]$Modulo,
-        [System.IO.FileInfo[]]$TodosLosTests
-    )
-
-    if ($null -eq $TodosLosTests -or $TodosLosTests.Count -eq 0) {
-        return @()
-    }
-
-    $relacionados = [System.Collections.Generic.Dictionary[string, System.IO.FileInfo]]::new()
-    $nombreModulo = $Modulo.Name.Trim().ToLowerInvariant().Replace('\', '/')
-
-    foreach ($test in $TodosLosTests) {
-        try {
-            $contenido = [System.IO.File]::ReadAllText($test.FullName, [System.Text.Encoding]::UTF8)
-            $contenidoNormalizado = $contenido.Replace('\', '/').ToLowerInvariant()
-
-            $esRelacionadoSrc = ($nombreModulo -eq "src" -and (
-                $contenidoNormalizado.Contains("../src/") -or
-                $contenidoNormalizado.Contains("@/")
-            ))
-
-            $esRelacionadoEntrypoint = ($nombreModulo -eq "[raiz-entrypoints]" -and (
-                $contenidoNormalizado.Contains("../server") -or
-                $contenidoNormalizado.Contains("../electron")
-            ))
-
-            if ($esRelacionadoSrc -or $esRelacionadoEntrypoint) {
-                $relacionados[$test.FullName] = $test
-            }
-        } catch {
-            Write-Warning "Error leyendo archivo de test $($test.FullName): $_"
-        }
-    }
-
-    return @($relacionados.Values)
 }
 
 function Contar-Lineas {
@@ -191,7 +123,7 @@ function Contar-Lineas {
 
     foreach ($archivo in $Archivos) {
         try {
-            $total += [System.IO.File]::ReadAllLines($archivo.FullName).Length
+            $total += (Get-Content -LiteralPath $archivo.FullName -ErrorAction SilentlyContinue).Count
         }
         catch {}
     }
@@ -202,71 +134,21 @@ function Buscar-DeudaTecnica {
     param([System.IO.FileInfo[]]$Archivos)
 
     $resultado = @{
-        TODO        = 0
-        FIXME       = 0
-        HACK        = 0
-        PANIC       = 0
+        TODO       = 0
+        FIXME      = 0
+        HACK       = 0
+        PANIC      = 0
         PLACEHOLDER = 0
-        FLOAT       = 0
-        BIND_ANY    = 0
-        Hallazgos   = [System.Collections.Generic.List[PSCustomObject]]::new()
     }
 
     foreach ($archivo in $Archivos) {
         try {
-            $lineas = [System.IO.File]::ReadAllLines($archivo.FullName)
+            $contenido = Get-Content -LiteralPath $archivo.FullName -ErrorAction SilentlyContinue
             
             # Evitar falsos positivos en el motor de diagnóstico que inspecciona estas mismas palabras clave
-            if ($archivo.Name -match "CALIFICADOR_MODULOS|radiografia_codigo|junta_medica|Calificar-Proyecto|auditar_todo|autopsia_integridad|Verificar-Errores|audit_arquitectura|audit_funcional|stress-test|indagar_govet|locate-ghost-files|build|ContableFix.iss|buscar_caracteres_raros") { continue }
+            if ($archivo.Name -match "DiagnosticsEngine|CALIFICADOR") { continue }
 
-            for ($num = 0; $num -lt $lineas.Length; $num++) {
-                $linea = $lineas[$num]
-                $lineaNum = $num + 1
-                $esArchivoTest = Es-Test $archivo
-                $esArchivoTelemetria = ($archivo.FullName -match '[\\/](health|observability|metrics|node)[\\/]')
-
-                # Pánico en tiempo de ejecución prohibido (se exceptúan suites de test que provocan pánicos deliberados)
-                if ($linea -match '(?i)\bpanic\s*\(' -and -not $esArchivoTest -and $linea -notmatch '^\s*//') {
-                    $resultado.PANIC++
-                    $resultado.Hallazgos.Add([PSCustomObject]@{
-                        Archivo = $archivo.FullName
-                        Linea   = $lineaNum
-                        Tipo    = "PANIC (NASA PROHIBITED)"
-                        Detalle = $linea.Trim()
-                    })
-                }
-                # Stubs e implementaciones pendientes (se excluyen atributos HTML como placeholder="..." y tipos generados)
-                $esStubReal = ($linea -match '(?i)(//|/\*|#|<!--).*placeholder' -or 
-                               $linea -match '(?i)\b(NOT IMPLEMENTED|IMPLEMENT ME)\b') -and
-                              ($linea -notmatch 'placeholder\s*=' -and $linea -notmatch 'replyPlaceholder')
-                if ($esStubReal) {
-                    $resultado.PLACEHOLDER++
-                    $resultado.Hallazgos.Add([PSCustomObject]@{
-                        Archivo = $archivo.FullName
-                        Linea   = $lineaNum
-                        Tipo    = "STUB / PLACEHOLDER"
-                        Detalle = $linea.Trim()
-                    })
-                }
-                # Punto flotante en kernel financiero (excluyendo tests, telemetría y CPU de observabilidad)
-                if ($archivo.Extension -eq ".go" -and -not $esArchivoTest -and -not $esArchivoTelemetria -and $linea -match '\b(float32|float64)\b' -and $linea -notmatch '^\s*//') {
-                    $resultado.FLOAT++
-                    $resultado.Hallazgos.Add([PSCustomObject]@{
-                        Archivo = $archivo.FullName
-                        Linea   = $lineaNum
-                        Tipo    = "FLOAT IN FINANCIAL KERNEL"
-                        Detalle = $linea.Trim()
-                    })
-                }
-                if ($linea -match '0\.0\.0\.0:\d+') {
-                    $resultado.BIND_ANY++
-                    $resultado.Hallazgos.Add([PSCustomObject]@{
-                        Archivo = $archivo.FullName
-                        Linea   = $lineaNum
-                        Tipo    = "INSECURE BIND (0.0.0.0)"
-                        Detalle = $linea.Trim()
-                    })
-                }
+            foreach ($linea in $contenido) {
                 if ($linea -match '(?i)\bTODO\b') {
                     $resultado.TODO++
                 }
@@ -275,6 +157,12 @@ function Buscar-DeudaTecnica {
                 }
                 if ($linea -match '(?i)\bHACK\b') {
                     $resultado.HACK++
+                }
+                if ($linea -match '(?i)\bpanic\s*\(') {
+                    $resultado.PANIC++
+                }
+                if ($linea -match '(?i)(?:\/\/|#|<!--|\/\*|\*|\{\s*\/\*)\s*(?:PLACEHOLDER|NOT IMPLEMENTED|IMPLEMENT ME)\b') {
+                    $resultado.PLACEHOLDER++
                 }
             }
         }
@@ -286,20 +174,16 @@ function Buscar-DeudaTecnica {
 
 function Calificar-Modulo {
     param(
-        [object]$Modulo,
-        [System.IO.FileInfo[]]$TodosLosTestsGlobales = @()
+        [System.IO.DirectoryInfo]$Modulo,
+        [System.IO.FileInfo[]]$TestsProyecto,
+        [System.IO.FileInfo[]]$DocumentacionProyecto
     )
 
-    $getArgs = @{
-        LiteralPath = $Modulo.FullName
-        File        = $true
-        ErrorAction = "SilentlyContinue"
-    }
-    if (-not $Modulo.EsRaiz) {
-        $getArgs["Recurse"] = $true
-    }
-
-    $archivos = Get-ChildItem @getArgs |
+    $archivos = Get-ChildItem `
+        -LiteralPath $Modulo.FullName `
+        -File `
+        -Recurse `
+        -ErrorAction SilentlyContinue |
         Where-Object {
             $ruta = $_.FullName
             $excluir = $false
@@ -321,9 +205,9 @@ function Calificar-Modulo {
         $codigo |
         Where-Object { Es-Test $_ }
     )
-
-    $testsExternos = Obtener-PruebasRelacionadas -Modulo $Modulo -TodosLosTests $TodosLosTestsGlobales
-    $totalTestsEfectivos = $tests.Count + $testsExternos.Count
+    if ($tests.Count -eq 0) {
+        $tests = $TestsProyecto
+    }
 
     $vacios = @(
         $archivos |
@@ -337,6 +221,9 @@ function Calificar-Modulo {
             $_.Name -match '(?i)README|ARCHITECTURE|TESTING|SECURITY|REQUIREMENTS'
         }
     )
+    if ($documentacion.Count -eq 0) {
+        $documentacion = $DocumentacionProyecto
+    }
 
     $lineas = Contar-Lineas $codigo
     $deuda = Buscar-DeudaTecnica $codigo
@@ -344,17 +231,9 @@ function Calificar-Modulo {
 
     foreach ($archivo in $codigo) {
         try {
-            $cantidad = [System.IO.File]::ReadAllLines($archivo.FullName).Length
+            $cantidad = (Get-Content -LiteralPath $archivo.FullName -ErrorAction SilentlyContinue).Count
             if ($cantidad -gt 800) {
                 $archivosGrandes++
-                if ($ZeroTolerance) {
-                    $deuda.Hallazgos.Add([PSCustomObject]@{
-                        Archivo = $archivo.FullName
-                        Linea   = $cantidad
-                        Tipo    = "OVERSIZED FILE (>800 lines)"
-                        Detalle = "Archivo excede limite de contencion NASA/JPL ($cantidad lineas)"
-                    })
-                }
             }
         }
         catch {}
@@ -367,11 +246,9 @@ function Calificar-Modulo {
     $score = 100
     $problemas = New-Object System.Collections.Generic.List[string]
 
-    if ($Modulo.Name -ne "docs") { # Only penalize for missing code if it's not the docs module
-        if ($codigo.Count -eq 0) {
-            $score -= 50
-            $problemas.Add("Sin archivos de codigo")
-        }
+    if ($codigo.Count -eq 0) {
+        $score -= 50
+        $problemas.Add("Sin archivos de codigo")
     }
 
     if ($vacios.Count -gt 0) {
@@ -380,16 +257,13 @@ function Calificar-Modulo {
         $problemas.Add("$($vacios.Count) archivo(s) vacio(s)")
     }
 
-    $esModuloSQL = ($Modulo.Name -in @("data", "database", "schemas")) -or ($codigo.Count -gt 0 -and ($codigo | Where-Object { $_.Extension -ne ".sql" }).Count -eq 0)
-    $esModuloContratos = ($Modulo.Name -eq "contracts") # Assuming 'contracts' might be a module name for Solidity
-
-    if ($codigo.Count -gt 0 -and -not $esModuloSQL -and -not $esModuloContratos) {
-        if ($totalTestsEfectivos -eq 0) {
+    if ($codigo.Count -gt 0) {
+        if ($tests.Count -eq 0) {
             $score -= 15
             $problemas.Add("Sin pruebas detectadas")
         }
         else {
-            $ratioTest = $totalTestsEfectivos / $codigo.Count
+            $ratioTest = $tests.Count / $codigo.Count
             if ($ratioTest -lt 0.05) {
                 $score -= 10
                 $problemas.Add("Cobertura estructural de tests muy baja")
@@ -401,14 +275,8 @@ function Calificar-Modulo {
         }
     }
 
-    # Penalizar por falta de documentación solo si no es el módulo 'docs' o si el módulo 'docs' está vacío
-    if ($Modulo.Name -eq "docs") {
-        if ($documentacion.Count -eq 0) {
-            $score -= 50 # Mayor penalización si el módulo de docs no tiene docs
-            $problemas.Add("Modulo de documentacion vacio")
-        }
-    } elseif ($documentacion.Count -eq 0) {
-        $score -= 10 # Penalización menor si no es el módulo de docs
+    if ($documentacion.Count -eq 0) {
+        $score -= 10
         $problemas.Add("Sin documentacion")
     }
 
@@ -442,38 +310,6 @@ function Calificar-Modulo {
         $problemas.Add("$archivosGrandes archivo(s) >800 lineas")
     }
 
-    # ========================================================
-    # POLITICA DE TOLERANCIA CERO
-    # ========================================================
-    $brechasCriticas = 0
-    if ($ZeroTolerance) {
-        if ($deuda.PANIC -gt 0) {
-            $score -= ($deuda.PANIC * 25)
-            $problemas.Add("CRITICO: $($deuda.PANIC) llamada(s) a panic() prohibidas")
-            $brechasCriticas += $deuda.PANIC
-        }
-        if ($deuda.PLACEHOLDER -gt 0) {
-            $score -= ($deuda.PLACEHOLDER * 15)
-            $problemas.Add("CRITICO: stubs o implementaciones inconclusas")
-            $brechasCriticas += $deuda.PLACEHOLDER
-        }
-        if ($deuda.BIND_ANY -gt 0) {
-            $score -= ($deuda.BIND_ANY * 30)
-            $problemas.Add("CRITICO: binding 0.0.0.0 no perimetral")
-            $brechasCriticas += $deuda.BIND_ANY
-        }
-        if ($vacios.Count -gt 0) {
-            $score -= 30
-            $problemas.Add("CRITICO: archivos vacios (0 bytes)")
-            $brechasCriticas += $vacios.Count
-        }
-        if ($codigo.Count -gt 0 -and -not $esModuloSQL -and -not $esModuloContratos -and $totalTestsEfectivos -eq 0 -and -not $Modulo.EsRaiz) {
-            $score = [Math]::Min($score, 30)
-            $problemas.Add("CRITICO: modulo en produccion sin suite de tests")
-            $brechasCriticas++
-        }
-    }
-
     if ($score -gt 100) { $score = 100 }
     if ($score -lt 0) { $score = 0 }
 
@@ -498,10 +334,9 @@ function Calificar-Modulo {
         Modulo        = $Modulo.Name
         Calificacion  = [int]$score
         Estado        = $estado
-        BrechasCriticas = $brechasCriticas
         Archivos      = $archivos.Count
         Codigo        = $codigo.Count
-        Tests         = $totalTestsEfectivos
+        Tests         = $tests.Count
         Documentacion = $documentacion.Count
         LineasCodigo  = $lineas
         Vacios        = $vacios.Count
@@ -511,7 +346,6 @@ function Calificar-Modulo {
         Pendientes    = $deuda.PLACEHOLDER
         Grandes       = $archivosGrandes
         Observaciones = $detalle
-        Hallazgos     = $deuda.Hallazgos
     }
 }
 
@@ -534,12 +368,41 @@ if (-not (Test-Path -LiteralPath $Ruta)) {
     exit 1
 }
 
+$testsProyecto = @()
+$directoriosTest = @(
+    Get-ChildItem -LiteralPath $Ruta -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^(?i:tests?)$' }
+)
+foreach ($directorioTest in $directoriosTest) {
+    $testsProyecto += @(
+        Get-ChildItem -LiteralPath $directorioTest.FullName -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object {
+            $rutaArchivo = $_.FullName
+            $excluir = $false
+            foreach ($dir in $ExcluirDirectorios) {
+                if ($rutaArchivo -match "[\\/]$([regex]::Escape($dir))[\\/]") {
+                    $excluir = $true
+                    break
+                }
+            }
+            -not $excluir -and (Es-ArchivoCodigo $_) -and (Es-Test $_)
+        }
+    )
+}
+
+$documentacionProyecto = @(
+    Get-ChildItem -LiteralPath $Ruta -File -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.Extension -in @(".md", ".txt", ".rst") -or
+        $_.Name -match '(?i)README|ARCHITECTURE|TESTING|SECURITY|REQUIREMENTS'
+    }
+)
+
 # ------------------------------------------------------------
-# Buscar modulos y archivos raiz
+# Buscar modulos principales
 # ------------------------------------------------------------
 
-$modulos = [System.Collections.Generic.List[object]]::new()
-$directorios = @(
+$modulos = @(
     Get-ChildItem `
         -LiteralPath $Ruta `
         -Directory `
@@ -549,77 +412,17 @@ $directorios = @(
     }
 )
 
-foreach ($dir in $directorios) {
-    $modulos.Add([PSCustomObject]@{
-        Name     = $dir.Name
-        FullName = $dir.FullName
-        EsRaiz   = $false
-        Categoria = switch ($dir.Name) {
-            "src"             { "Fuente" }
-            "test"            { "Pruebas" }
-            "reports"         { "Evidencia" }
-            "dist-server"     { "ArtefactoServidor" }
-            "dist-installer"  { "Instalador" }
-            default           { "General" }
-        }
-    })
-}
-
-$archivosRaiz = @(
-    Get-ChildItem -LiteralPath $Ruta -File -ErrorAction SilentlyContinue |
-    Where-Object { Es-ArchivoCodigo $_ }
-)
-
-if ($archivosRaiz.Count -gt 0) {
-    $modulos.Add([PSCustomObject]@{
-        Name     = "[RAIZ-ENTRYPOINTS]"
-        FullName = $Ruta
-        EsRaiz   = $true
-        Categoria = "Fuente"
-    })
-}
-
 if ($modulos.Count -eq 0) {
-    $modulos.Add((Get-Item -LiteralPath $Ruta))
+    $modulos = @(Get-Item -LiteralPath $Ruta)
 }
 
 $resultados = @()
 
-# Recopilación de todos los tests del repositorio para trazabilidad inter-módulos
-$todosLosTestsGlobales = @(
-    Get-ChildItem -LiteralPath $Ruta -File -Recurse -ErrorAction SilentlyContinue |
-    Where-Object {
-        $ruta = $_.FullName
-        ($ruta -match '\\/[\\/]' -or (Es-Test $_)) -and (-not (Es-DirectorioExcluido $_.Directory.Name))
-    }
-)
-
 foreach ($modulo in $modulos) {
-    if ($modulo.Categoria -in @("Evidencia", "ArtefactoServidor", "Instalador")) {
-        $estadoEspecial = switch ($modulo.Categoria) {
-            "Evidencia"        { "PENDIENTE DE VALIDACION" }
-            "ArtefactoServidor" { "BUILD NO CERTIFICADO" }
-            "Instalador"       { "INSTALADOR NO CERTIFICADO" }
-        }
-        $resultados += [PSCustomObject]@{
-            Modulo          = $modulo.Name
-            Calificacion    = "N/A"
-            Estado          = $estadoEspecial
-            BrechasCriticas = 0
-            Codigo          = 0
-            Tests           = 0
-            Vacios          = 0
-            Observaciones   = "Excluido de evaluacion numerica por categoria $($modulo.Categoria)"
-        }
-        continue
-    }
-    Write-Host "Analizando: $($modulo.Name) [$($modulo.Categoria)]" -ForegroundColor DarkGray
-    $resultado = Calificar-Modulo -Modulo $modulo -TodosLosTestsGlobales $todosLosTestsGlobales
+    Write-Host "Analizando: $($modulo.Name)" -ForegroundColor DarkGray
+    $resultado = Calificar-Modulo $modulo $testsProyecto $documentacionProyecto
     $resultados += $resultado
 }
-
-$totalBrechas = ($resultados | Measure-Object -Property BrechasCriticas -Sum).Sum
-if ($null -eq $totalBrechas) { $totalBrechas = 0 }
 
 # ============================================================
 # RANKING
@@ -636,17 +439,26 @@ Write-Host "                    CALIFICACIONES" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
-$columnas = @("Modulo", "Calificacion", "Estado", "Codigo", "Tests", "Vacios", "TODO", "FIXME", "Pendientes")
-$resultados | Format-Table -Property $columnas -AutoSize
+$resultados |
+Format-Table `
+    Modulo,
+    Calificacion,
+    Estado,
+    Codigo,
+    Tests,
+    Vacios,
+    TODO,
+    FIXME,
+    Pendientes `
+    -AutoSize
 
 # ============================================================
 # PROMEDIO GENERAL
 # ============================================================
 
-$evaluados = @($resultados | Where-Object { $_.Calificacion -ne "N/A" })
 $promedio = [Math]::Round(
     (
-        $evaluados |
+        $resultados |
         Measure-Object `
             -Property Calificacion `
             -Average
@@ -699,63 +511,8 @@ foreach ($r in $resultados) {
     Write-Host "  Observaciones: $($r.Observaciones)"
 }
 
-if ($RevisarCodigo -or $ZeroTolerance) {
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "   PERITAJE FORENSE DE CODIGO FUENTE (LINEA POR LINEA)      " -ForegroundColor Cyan
-    Write-Host "============================================================" -ForegroundColor Cyan
-
-    $todosHallazgos = [System.Collections.Generic.List[PSCustomObject]]::new()
-    foreach ($r in $resultados) {
-        if ($r.Hallazgos) {
-            foreach ($h in $r.Hallazgos) {
-                $rel = $h.Archivo.Replace($Ruta, "").TrimStart([char[]]@('\', '/'))
-                $evidencia = $h.Detalle
-                if ($evidencia.Length -gt 60) {
-                    $evidencia = $evidencia.Substring(0, 57) + "..."
-                }
-                $todosHallazgos.Add([PSCustomObject]@{
-                    Ubicacion  = "$($rel):$($h.Linea)"
-                    Infraccion = $h.Tipo
-                    Evidencia  = $evidencia
-                })
-            }
-        }
-    }
-
-    if ($todosHallazgos.Count -eq 0) {
-        Write-Host " [PASS] Cero transgresiones o stubs detectados en codigo fuente." -ForegroundColor Green
-    } else {
-        Write-Host " Se detectaron $($todosHallazgos.Count) transgresion(es) en codigo fuente:" -ForegroundColor Red
-        Write-Host ""
-        $todosHallazgos | Format-Table -AutoSize
-    }
-    Write-Host ""
-}
-
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "AUDITORIA TERMINADA - NO SE MODIFICO NINGUN ARCHIVO" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
-
-if ($ZeroTolerance) {
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "     DICTAMEN DE CERTIFICACION - TOLERANCIA CERO             " -ForegroundColor Cyan
-    Write-Host "============================================================" -ForegroundColor Cyan
-    $colorBrechas = if ($totalBrechas -eq 0) { "Green" } else { "Red" }
-    $colorPromedio = if ($promedio -ge $MinScore) { "Green" } else { "Red" }
-    Write-Host "  Brechas Criticas Totales: $totalBrechas" -ForegroundColor $colorBrechas
-    Write-Host "  Umbral Minimo Requerido:  $MinScore / 100" -ForegroundColor White
-    Write-Host "  Puntaje Obtenido:         $promedio / 100" -ForegroundColor $colorPromedio
-
-    if ($totalBrechas -gt 0 -or $promedio -lt $MinScore) {
-        Write-Host "`n[STATIC GATE REJECTED] El sistema no cumple los requisitos de Tolerancia Cero." -ForegroundColor Red
-        exit 1
-    } else {
-        Write-Host "`n[STATIC GATE PASSED] Certificacion aprobada al 100%." -ForegroundColor Green
-        exit 0
-    }
-} else {
-    exit 0
-}

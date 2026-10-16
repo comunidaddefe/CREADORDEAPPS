@@ -98,6 +98,15 @@ CREADORDEAPPS/
 ├── src/
 │   ├── main.tsx        # SPA visual builder, state store & canvas components
 │   └── index.css       # Global styles & Tailwind CSS v4 directives
+├── test/
+│   ├── auth.test.ts    # Fail-closed authorization & proxy unit tests
+│   ├── path-validation.test.ts # Windows reserved names & path traversal tests
+│   ├── proxy-auth.test.ts # Proxy authentication & Bearer token authorization tests
+│   └── telemetry.test.ts # Node.js runtime process metrics & fallback telemetry tests
+├── CALIFICADOR_MODULOS.ps1 # Static heuristic module score auditor
+├── Calificar-Proyecto.ps1  # Executable environment, typecheck & build validator
+├── clean.ps1           # Deterministic build artifact purge script
+├── git-commit-push.ps1 # Secure Git add, commit & push automation pipeline
 ├── electron.cjs        # Windows desktop runtime container (Electron)
 ├── build.bat           # Packaging and distribution pipeline script
 ├── installer.iss       # Inno Setup Windows installer configuration

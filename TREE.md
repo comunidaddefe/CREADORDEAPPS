@@ -10,7 +10,44 @@ Este documento describe la topología física y lógica del repositorio, detalla
 CREADORDEAPPS/
 │
 ├── 📁 src/                                  # Código fuente de la interfaz de usuario (React 19)
+│   ├── 📁 components/                       # Componentes desacoplados de UI
+│   │   └── SortableWidgetCard.tsx           # Tarjeta de widget interactiva con drag-and-drop
+│   │   ├── 📁 modals/                       # Diálogos modales atómicos
+│   │   │   ├── JsonSchemaModal.tsx          # Importación, exportación y validación de JSON
+│   │   │   ├── SettingsModal.tsx            # Configuración de upstream SoluSol Cloud
+│   │   │   └── InterviewModal.tsx           # Diálogo conversacional guiado con Santiago
+│   │   ├── 📁 views/                        # Vistas y paneles del área de trabajo
+│   │   │   ├── PaletteSidebar.tsx           # Barra lateral de paleta de componentes
+│   │   │   ├── PropertiesPanel.tsx          # Inspector de atributos y selector de 12 cols
+│   │   │   ├── ProjectWorkspace.tsx         # Visor multi-archivo y terminal command
+│   │   │   └── CodeSynthesisViewer.tsx      # Visor monolítico de código exportado
+│   │   └── 📁 navigation/                   # Cabeceras y barras de acción
+│   │       ├── TopNavBar.tsx                # Barra principal de 3 zonas con selectores
+│   │       └── ScaffoldingBar.tsx           # Barra de prompt y disparadores de scaffolding
+│   ├── 📁 hooks/                            # Custom hooks desacoplados de estado
+│   │   ├── useDashboardHistory.ts           # Undo/Redo, persistencia y atajos de teclado
+│   │   ├── useTelemetryPolling.ts           # Bucle reactivo con retroceso adaptativo (3s-30s)
+│   │   └── useCodeGeneration.ts             # Control asíncrono de llamadas de síntesis
+│   ├── 📁 constants/                        # Catálogo de stacks, presets y traducciones
+│   │   └── stacks.ts                        # Presets de telemetría y constantes del sistema
+│   ├── 📁 types/                            # Tipado e interfaces canónicas del dominio
+│   │   └── dashboard.ts                     # Esquemas TypeScript de widgets y proyectos
 │   ├── 📁 server/                           # Módulos puros desacoplados del runtime HTTP
+│   │   ├── 📁 controllers/                  # Controladores de endpoints y orquestación
+│   │   │   ├── generation.controller.ts     # Generación de layout, código y proyectos
+│   │   │   ├── interview.controller.ts      # Conversación estructurada con Santiago
+│   │   │   └── telemetry.controller.ts      # Despacho de telemetría de activos y Node.js
+│   │   ├── 📁 middleware/                   # Middlewares perimetrales de seguridad y red
+│   │   │   ├── concurrency-guard.ts         # Control de hasta 3 tareas pesadas simultáneas
+│   │   │   ├── error-handler.ts             # Captura centralizada de excepciones
+│   │   │   ├── proxy-auth.ts                # Validación fail-closed de clave interna
+│   │   │   ├── rate-limiter.ts              # Ventana deslizante con desalojo en memoria
+│   │   │   └── trace-context.ts             # Inyección y propagación de X-Trace-Id
+│   │   ├── 📁 services/                     # Clientes HTTP aislados de upstream e inferencia
+│   │   │   ├── ollama.service.ts            # Cliente HTTP para LLMs locales
+│   │   │   ├── santiago.service.ts          # Cliente HTTP para santiago.solusol.net
+│   │   │   └── solusol.service.ts           # Cliente HTTP para api.solusol.net
+│   │   ├── index.ts                         # Barril canónico de exportación lógica
 │   │   ├── project-validation.ts            # Validador canónico de rutas y tamaño de proyectos
 │   │   ├── proxy-policy.ts                  # Lista blanca de métodos y rutas proxy
 │   │   └── extraction.ts                    # Extractor determinista por balanceo de caracteres
@@ -18,7 +55,9 @@ CREADORDEAPPS/
 │   └── index.css                            # Directivas Tailwind CSS v4 y estilos globales
 ├── 📁 test/                                 # Suite automatizada de pruebas perimetrales
 │   ├── auth.test.ts                         # Pruebas de autorización fail-closed y proxies
-│   └── path-validation.test.ts              # Validación contra path traversal y nombres reservados
+│   ├── path-validation.test.ts              # Validación contra path traversal y nombres reservados
+│   ├── proxy-auth.test.ts                   # Validación de autenticación proxy fail-closed y tokens Bearer
+│   └── telemetry.test.ts                    # Validación de telemetría Node.js y fallbacks declarativos
 │
 ├── 📄 server.ts                             # Backend Node/Express: API Gateway, proxies y síntesis
 ├── 📄 electron.cjs                          # Envoltura de escritorio de Windows (Chromium container)
@@ -26,6 +65,8 @@ CREADORDEAPPS/
 ├── 📄 installer.iss                         # Script de empaquetado de instalador Inno Setup (x64)
 ├── 📄 CALIFICADOR_MODULOS.ps1               # Auditor estático heurístico de alta confiabilidad
 ├── 📄 Calificar-Proyecto.ps1                # Verificador ejecutable de entorno, tipado, pruebas y build
+├── 📄 clean.ps1                             # Script de purga determinista de artefactos y residuos
+├── 📄 git-commit-push.ps1                   # Pipeline automatizado y seguro de add, commit y push
 │
 ├── 📚 Documentación Canónica (.md)
 │   ├── PROJECT.md                           # Visión del producto, pilares y catálogo de 38 stacks
@@ -47,6 +88,7 @@ CREADORDEAPPS/
 │
 ├── 📦 Artefactos de Compilación (Git-Ignored)
 │   ├── 📁 dist/                             # Bundle web de producción generado por Vite
+│   ├── 📁 dist-server/                      # Bundle de servidor independiente (server.cjs via esbuild)
 │   └── 📁 dist-installer/                   # Ejecutable setup de instalación generado por Inno Setup
 │
 ├── ⚙️ Configuración y Runtime
@@ -83,9 +125,11 @@ CREADORDEAPPS/
 ### 2.3 Capa de Contenedor de Escritorio (`electron.cjs`)
 * Envoltura de aplicación nativa Windows con aceleración gráfica configurable, tamaño de ventana estándar (1366x860) y delegación segura de enlaces externos hacia el navegador predeterminado.
 
-### 2.4 Capa de Compilación y Distribución (`build.bat`, `installer.iss`)
+### 2.4 Capa de Compilación, Empaquetado y Automatización (`build.bat`, `installer.iss`, `clean.ps1`, `git-commit-push.ps1`)
 * **`build.bat`:** Validador de entorno (Node/npm), ejecución estricta de `npm run typecheck` (Evidence First), compilación de producción con Vite (`dist/`) y orquestación del compilador `ISCC.exe`.
 * **`installer.iss`:** Definición declarativa de empaquetado para Inno Setup: genera un instalador de Windows nativo de 64 bits en `dist-installer/` con soporte bilingüe (español/inglés) y desinstalador limpio.
+* **`clean.ps1`:** Limpiador determinista que purga artefactos generados (`dist/`, `dist-server/`, `dist-installer/`, `coverage/`) y archivos temporales residuales.
+* **`git-commit-push.ps1`:** Automatización de flujo Git seguro con verificación de working tree, detección de cambios y publicación directa a la rama activa.
 
 ---
 

@@ -4,6 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "main": "electron.cjs",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "dev:backend": "tsx server.ts",

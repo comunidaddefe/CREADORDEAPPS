@@ -1,0 +1,61 @@
+import React, { useState, useEffect, useRef } from 'react';
+
+interface CodeSynthesisViewerProps {
+  targetStack: string;
+  provider: string;
+  ollamaModel?: string;
+  code: string;
+  onNotify?: (message: string) => void;
+}
+
+export function CodeSynthesisViewer({
+  targetStack,
+  provider,
+  ollamaModel,
+  code,
+  onNotify,
+}: CodeSynthesisViewerProps) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const handleCopy = async () => {
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 2000);
+      onNotify?.('Código copiado al portapapeles');
+    } catch {
+      onNotify?.('Error al copiar al portapapeles: permiso denegado');
+    }
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto bg-slate-900 text-slate-100 p-6 rounded-lg font-mono text-xs overflow-x-auto shadow-lg">
+      <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800 text-slate-400">
+        <span>
+          Stack: {targetStack.toUpperCase()} | Engine: {provider.toUpperCase()}{' '}
+          {provider === 'ollama' && ollamaModel ? `(${ollamaModel})` : ''}
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          disabled={!code}
+          className="hover:text-white transition-colors font-sans text-xs px-2 py-0.5 rounded border border-slate-700 hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {copied ? 'Copied to clipboard ✓' : 'Copy to clipboard'}
+        </button>
+      </div>
+      <pre className="whitespace-pre-wrap leading-relaxed">
+        {code || '// Select "Export Native Code" to synthesize code.'}
+      </pre>
+    </div>
+  );
+}
