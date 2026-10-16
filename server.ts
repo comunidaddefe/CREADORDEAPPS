@@ -3,6 +3,9 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
+import { ALLOWED_SOLUSOL_ROUTES, ALLOWED_AGENT_ROUTES } from './src/server/proxy-policy.ts';
+import { extractBalancedJson, extractCode } from './src/server/extraction.ts';
+import { validateProjectFiles } from './src/server/project-validation.ts';
 
 export const SUPPORTED_STACKS = [
   'html', 'php', 'tsx', 'go', 'json',
@@ -18,6 +21,62 @@ export type SupportedStack = typeof SUPPORTED_STACKS[number];
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+
+// Control de concurrencia y frecuencia en memoria (Rate Limiting y Concurrency Guard)
+const requestCounts = new Map<string, { count: number; resetTime: number }>();
+const RATE_LIMIT_WINDOW_MS = 60000;
+const MAX_REQUESTS_PER_WINDOW = 60;
+
+// Barrido periódico para liberar memoria de registros expirados en el limitador
+const rateLimitSweeper = setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of requestCounts.entries()) {
+    if (now > record.resetTime) {
+      requestCounts.delete(key);
+    }
+  }
+}, RATE_LIMIT_WINDOW_MS);
+if (rateLimitSweeper.unref) rateLimitSweeper.unref();
+
+const rateLimiter = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const traceId = (req as any).traceId;
+  const clientKey = req.ip || '127.0.0.1';
+  const now = Date.now();
+  const record = requestCounts.get(clientKey);
+
+  if (!record || now > record.resetTime) {
+    requestCounts.set(clientKey, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+  } else {
+    record.count++;
+    if (record.count > MAX_REQUESTS_PER_WINDOW) {
+      const retryAfterSec = Math.ceil((record.resetTime - now) / 1000);
+      res.setHeader('Retry-After', String(Math.max(1, retryAfterSec)));
+      return sendError(res, 429, 'ERR_RATE_LIMIT_EXCEEDED', 'Demasiadas solicitudes. Espere antes de reintentar.', traceId);
+    }
+  }
+  next();
+};
+
+const MAX_CONCURRENT_HEAVY_TASKS = 3;
+let activeHeavyTasks = 0;
+
+export const concurrencyGuard = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const traceId = (req as any).traceId;
+  if (activeHeavyTasks >= MAX_CONCURRENT_HEAVY_TASKS) {
+    return sendError(res, 503, 'ERR_CONCURRENCY_LIMIT', 'Motor ocupado procesando solicitudes simultaneas de alta demanda. Reintente en un momento.', traceId);
+  }
+  activeHeavyTasks++;
+  let released = false;
+  const release = () => {
+    if (!released) {
+      released = true;
+      activeHeavyTasks = Math.max(0, activeHeavyTasks - 1);
+    }
+  };
+  res.once('finish', release);
+  res.once('close', release);
+  next();
+};
 
 // Inyección y propagación de trazabilidad distribuida (Trace Context)
 app.use((req, res, next) => {
@@ -70,11 +129,6 @@ const SOLUSOL_BASE_URL = (process.env.SOLUSOL_API_URL || 'https://api.solusol.ne
 const SOLUSOL_API_KEY = process.env.SOLUSOL_API_KEY || '';
 const SANTIAGO_AGENT_URL = (process.env.SANTIAGO_AGENT_URL || 'https://santiago.solusol.net').replace(/\/+$/, '');
 const SANTIAGO_API_KEY = process.env.SANTIAGO_API_KEY || '';
-
-const ALLOWED_SOLUSOL_METHODS = new Set(['GET', 'POST']);
-const ALLOWED_AGENT_METHODS = new Set(['POST']);
-
-const WINDOWS_RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
 
 interface StandardErrorResponse {
   error: string;
@@ -251,15 +305,16 @@ app.get('/api/data', requireProxyAuth, async (req, res) => {
 });
 
 // Proxy transparente hacia api.solusol.net
-app.all('/api/solusol/*', requireProxyAuth, async (req, res) => {
-  if (!ALLOWED_SOLUSOL_METHODS.has(req.method)) {
-    return sendError(res, 405, 'ERR_METHOD_NOT_ALLOWED', `Method ${req.method} not allowed on SoluSol proxy.`, (req as any).traceId);
-  }
+app.all('/api/solusol/*', rateLimiter, requireProxyAuth, async (req, res) => {
   const traceId = (req as any).traceId;
-  const targetPath = req.path.replace(/^\/api\/solusol\/?/, '');
+  const targetPath = req.path.replace(/^\/api\/solusol\/?/, '').replace(/\/+$/, '');
 
-  if (targetPath.includes('..') || targetPath.startsWith('/')) {
-    return sendError(res, 400, 'ERR_INVALID_PROXY_PATH', 'Invalid path traversal pattern.', traceId);
+  const allowedMethods = ALLOWED_SOLUSOL_ROUTES.get(targetPath);
+  if (!allowedMethods) {
+    return sendError(res, 403, 'ERR_FORBIDDEN_PROXY_ROUTE', `Ruta upstream no permitida en SoluSol: /${targetPath}`, traceId);
+  }
+  if (!allowedMethods.has(req.method)) {
+    return sendError(res, 405, 'ERR_METHOD_NOT_ALLOWED', `Metodo ${req.method} no permitido en /${targetPath}`, traceId);
   }
 
   const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
@@ -287,15 +342,16 @@ app.all('/api/solusol/*', requireProxyAuth, async (req, res) => {
 });
 
 // Proxy transparente hacia santiago.solusol.net (Santiago Autonomous Agent)
-app.all('/api/agent/*', requireProxyAuth, async (req, res) => {
-  if (!ALLOWED_AGENT_METHODS.has(req.method)) {
-    return sendError(res, 405, 'ERR_METHOD_NOT_ALLOWED', `Method ${req.method} not allowed on Santiago agent proxy.`, (req as any).traceId);
-  }
+app.all('/api/agent/*', rateLimiter, requireProxyAuth, async (req, res) => {
   const traceId = (req as any).traceId;
-  const targetPath = req.path.replace(/^\/api\/agent\/?/, '');
+  const targetPath = req.path.replace(/^\/api\/agent\/?/, '').replace(/\/+$/, '');
 
-  if (targetPath.includes('..') || targetPath.startsWith('/')) {
-    return sendError(res, 400, 'ERR_INVALID_PROXY_PATH', 'Invalid path traversal pattern.', traceId);
+  const allowedMethods = ALLOWED_AGENT_ROUTES.get(targetPath);
+  if (!allowedMethods) {
+    return sendError(res, 403, 'ERR_FORBIDDEN_PROXY_ROUTE', `Ruta upstream no permitida en Santiago Agent: /${targetPath}`, traceId);
+  }
+  if (!allowedMethods.has(req.method)) {
+    return sendError(res, 405, 'ERR_METHOD_NOT_ALLOWED', `Metodo ${req.method} no permitido en /${targetPath}`, traceId);
   }
 
   const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
@@ -321,61 +377,6 @@ app.all('/api/agent/*', requireProxyAuth, async (req, res) => {
     return sendError(res, 502, 'ERR_SANTIAGO_UNREACHABLE', 'Upstream Santiago agent unreachable.', traceId);
   }
 });
-
-/**
- * Extractor determinista por balanceo de caracteres delimitadores.
- * Resuelve de raíz fallos cuando el LLM emite texto o markdown antes/después del payload.
- */
-export const extractBalancedJson = (
-  raw: string,
-  openChar: '{' | '[' | '(' = '{',
-  closeChar: '}' | ']' | ')' = '}'
-): string => {
-  const cleaned = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-  const startIndex = cleaned.indexOf(openChar);
-  if (startIndex === -1) return cleaned;
-
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-
-  for (let i = startIndex; i < cleaned.length; i++) {
-    const char = cleaned[i];
-
-    if (inString) {
-      if (escape) {
-        escape = false;
-      } else if (char === '\\') {
-        escape = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-    } else if (char === openChar) {
-      depth++;
-    } else if (char === closeChar) {
-      depth--;
-      if (depth === 0) {
-        return cleaned.slice(startIndex, i + 1);
-      }
-    }
-  }
-
-  if (depth !== 0) {
-    throw new SyntaxError(`'${openChar}' was never closed`);
-  }
-
-  return cleaned.slice(startIndex);
-};
-
-export const extractCode = (text: string): string => {
-  const codeBlockMatch = text.match(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)\s*```/);
-  return codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
-};
 
 // Generación de layout canónico (disponible en /generate y /api/generate-dashboard)
 const handleGenerateLayout = async (req: express.Request, res: express.Response) => {
@@ -496,8 +497,6 @@ const handleGenerateLayout = async (req: express.Request, res: express.Response)
   }
 };
 
-app.post('/generate', handleGenerateLayout);
-app.post('/api/generate-dashboard', handleGenerateLayout);
 
 // Síntesis a código nativo políglota (disponible en /export y /api/export-code)
 const handleExportCode = async (req: express.Request, res: express.Response) => {
@@ -586,37 +585,6 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
     return sendError(res, 502, 'ERR_UPSTREAM_UNREACHABLE', 'Failed to synthesize code for target stack via api.solusol.net', traceId);
   }
 };
-
-function validateProjectFiles(files: any[]): { valid: boolean; error?: string } {
-  if (!Array.isArray(files) || files.length === 0) {
-    return { valid: false, error: 'Project must contain a non-empty array of files.' };
-  }
-  if (files.length > 100) {
-    return { valid: false, error: 'Project exceeds maximum file count limit (100).' };
-  }
-  const seenPaths = new Set<string>();
-  for (const f of files) {
-    if (!f || typeof f.path !== 'string' || typeof f.content !== 'string') {
-      return { valid: false, error: 'Each file entry must have string "path" and "content".' };
-    }
-    const normalized = f.path.replace(/\\/g, '/').trim();
-    if (!normalized || path.isAbsolute(normalized) || normalized.includes('..') || normalized.startsWith('/')) {
-      return { valid: false, error: `Invalid or unsafe path format: ${f.path}` };
-    }
-    const filename = path.basename(normalized);
-    if (WINDOWS_RESERVED_NAMES.test(filename)) {
-      return { valid: false, error: `Path contains reserved Windows device name: ${filename}` };
-    }
-    if (seenPaths.has(normalized)) {
-      return { valid: false, error: `Duplicate file path detected: ${normalized}` };
-    }
-    if (f.content.length > 1024 * 1024) {
-      return { valid: false, error: `Individual file exceeds size limit of 1MB: ${normalized}` };
-    }
-    seenPaths.add(normalized);
-  }
-  return { valid: true };
-}
 
 const handleGenerateProject = async (req: express.Request, res: express.Response) => {
   const traceId = (req as any).traceId;
@@ -749,7 +717,7 @@ Return ONLY a valid JSON object matching this schema:
   }
 };
 
-app.post('/api/generate-project', requireProxyAuth, handleGenerateProject);
+app.post('/api/generate-project', rateLimiter, concurrencyGuard, requireProxyAuth, handleGenerateProject);
 
 const handleInterview = async (req: express.Request, res: express.Response) => {
   const traceId = (req as any).traceId;
@@ -865,11 +833,11 @@ Return ONLY valid JSON matching this schema:
   });
 };
 
-app.post('/api/interview', requireProxyAuth, handleInterview);
-app.post('/export', requireProxyAuth, handleExportCode);
-app.post('/api/export-code', requireProxyAuth, handleExportCode);
-app.post('/generate', requireProxyAuth, handleGenerateLayout);
-app.post('/api/generate-dashboard', requireProxyAuth, handleGenerateLayout);
+app.post('/api/interview', rateLimiter, concurrencyGuard, requireProxyAuth, handleInterview);
+app.post('/export', rateLimiter, concurrencyGuard, requireProxyAuth, handleExportCode);
+app.post('/api/export-code', rateLimiter, concurrencyGuard, requireProxyAuth, handleExportCode);
+app.post('/generate', rateLimiter, concurrencyGuard, requireProxyAuth, handleGenerateLayout);
+app.post('/api/generate-dashboard', rateLimiter, concurrencyGuard, requireProxyAuth, handleGenerateLayout);
 
 // Middleware global de captura de excepciones (Zero Trust Sanitization)
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -917,7 +885,10 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('[AppCraft Engine] Fatal startup error:', err);
-  process.exit(1);
-});
+const isTestExecution = process.env.NODE_ENV === 'test' || process.argv.some((arg) => arg.includes('test'));
+if (!isTestExecution) {
+  startServer().catch((err) => {
+    console.error('[AppCraft Engine] Fatal startup error:', err);
+    process.exit(1);
+  });
+}

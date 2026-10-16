@@ -10,13 +10,22 @@ Este documento describe la topología física y lógica del repositorio, detalla
 CREADORDEAPPS/
 │
 ├── 📁 src/                                  # Código fuente de la interfaz de usuario (React 19)
+│   ├── 📁 server/                           # Módulos puros desacoplados del runtime HTTP
+│   │   ├── project-validation.ts            # Validador canónico de rutas y tamaño de proyectos
+│   │   ├── proxy-policy.ts                  # Lista blanca de métodos y rutas proxy
+│   │   └── extraction.ts                    # Extractor determinista por balanceo de caracteres
 │   ├── main.tsx                             # SPA visual builder, store de estado, canvas y explorer
 │   └── index.css                            # Directivas Tailwind CSS v4 y estilos globales
+├── 📁 test/                                 # Suite automatizada de pruebas perimetrales
+│   ├── auth.test.ts                         # Pruebas de autorización fail-closed y proxies
+│   └── path-validation.test.ts              # Validación contra path traversal y nombres reservados
 │
 ├── 📄 server.ts                             # Backend Node/Express: API Gateway, proxies y síntesis
 ├── 📄 electron.cjs                          # Envoltura de escritorio de Windows (Chromium container)
 ├── 📄 build.bat                             # Script de automatización de compilación y empaquetado
 ├── 📄 installer.iss                         # Script de empaquetado de instalador Inno Setup (x64)
+├── 📄 CALIFICADOR_MODULOS.ps1               # Auditor estático heurístico de alta confiabilidad
+├── 📄 Calificar-Proyecto.ps1                # Verificador ejecutable de entorno, tipado, pruebas y build
 │
 ├── 📚 Documentación Canónica (.md)
 │   ├── PROJECT.md                           # Visión del producto, pilares y catálogo de 38 stacks

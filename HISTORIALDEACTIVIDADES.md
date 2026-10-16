@@ -137,3 +137,19 @@ Querido Diario:
    * Actualizamos `installer.iss` para incluir `server.cjs` y aislamos `dist-server/` y `dist-installer/` en `.gitignore`.
 
 *Ahora sí: código blindado, documentado y listo para sincronizar.* 💅✨
+
+---
+
+## 🏛️ Entrada 10: "Remediación Arquitectónica Integral (Bajo las Cuatro Doctrinas)"
+
+Querido Diario:
+
+Cero parches, cero remiendos. Redefinimos todas las correcciones como una reconstrucción integral basada en nuestras 4 leyes fundamentales: **Zero Trust, Zero Patches, Evidence First y Zero AI Design**:
+
+1. **Concurrencia Transversal y Rate Limiter con Memoria Acotada (`server.ts`):** Unificamos el control de concurrencia (`concurrencyGuard`) para todas las tareas pesadas con liberación en `finish`/`close`. El limitador ahora incluye barrido periódico de memoria y encabezado `Retry-After`.
+2. **Aislamiento Estricto de CSP y Dominio (`electron.cjs`):** Se restringió `onHeadersReceived` con filtro exclusivo para el puerto del servidor local y se removieron todos los dominios externos en `connect-src`.
+3. **Gestión de Árbol de Procesos en Windows (`electron.cjs`):** Terminación mediante `taskkill /pid <PID> /T /F` para evitar subprocesos huérfanos.
+4. **Validación Exhaustiva de Rutas Multi-Archivo:** Comprobación por segmentos frente a caracteres prohibidos, traversal (`..`), nombres reservados de Windows (`CON`, `PRN`, `NUL`), mayúsculas/minúsculas y límites de tamaño.
+5. **Suite de Pruebas Automatizadas (`test/`):** Implementamos `test/path-validation.test.ts` y `test/auth.test.ts` ejecutables con `tsx --test`.
+
+*Estado: Remediación arquitectónica integral lista para validación y certificación de pruebas.* 💅✨

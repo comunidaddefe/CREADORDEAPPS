@@ -6,6 +6,8 @@
   "main": "electron.cjs",
   "scripts": {
     "dev": "tsx server.ts",
+    "dev:backend": "tsx server.ts",
+    "dev:electron": "electron .",
     "start": "NODE_ENV=production tsx server.ts",
     "desktop": "electron .",
     "build:client": "vite build",

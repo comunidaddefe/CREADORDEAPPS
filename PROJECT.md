@@ -49,10 +49,14 @@ CREADORDEAPPS/
 ├── src/
 │   ├── main.tsx          # Punto de entrada de UI, lienzo interactivo y estado
 │   └── index.css         # Directivas globales y configuración Tailwind CSS v4
+├── test/
+│   ├── auth.test.ts      # Pruebas unitarias de autorización fail-closed y proxies
+│   └── path-validation.test.ts # Validación exhaustiva contra path traversal y nombres reservados
 ├── electron.cjs          # Contenedor de escritorio Windows (Electron runtime)
 ├── build.bat             # Pipeline de compilación y empaquetado nativo
 ├── installer.iss         # Definición de instalador Windows con Inno Setup
 ├── server.ts             # Servidor Express, proxies hacia SoluSol y Ollama
+├── CALIFICADOR_MODULOS.ps1 # Auditor numérico y forense NASA/MIL-STD Zero Tolerance
 ├── AGENTE.md             # Especificación y protocolo del Agente Santiago
 ├── CONTRACTS.md          # Esquemas de datos, APIs y contratos canónicos
 ├── UI.md                 # Arquitectura de interfaz, grid y componentes
