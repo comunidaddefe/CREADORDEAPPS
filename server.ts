@@ -17,7 +17,7 @@ export const SUPPORTED_STACKS = [
 export type SupportedStack = typeof SUPPORTED_STACKS[number];
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // Inyección y propagación de trazabilidad distribuida (Trace Context)
 app.use((req, res, next) => {
@@ -50,6 +50,7 @@ app.use((req, res, next) => {
 });
 
 const INTERNAL_API_SECRET = process.env.APP_INTERNAL_SECRET || '';
+const APP_INSTANCE_ID = process.env.APP_INSTANCE_ID || '';
 
 /**
  * Middleware de autorización real para rutas sensibles y proxies (Zero Trust).
@@ -69,6 +70,11 @@ const SOLUSOL_BASE_URL = (process.env.SOLUSOL_API_URL || 'https://api.solusol.ne
 const SOLUSOL_API_KEY = process.env.SOLUSOL_API_KEY || '';
 const SANTIAGO_AGENT_URL = (process.env.SANTIAGO_AGENT_URL || 'https://santiago.solusol.net').replace(/\/+$/, '');
 const SANTIAGO_API_KEY = process.env.SANTIAGO_API_KEY || '';
+
+const ALLOWED_SOLUSOL_METHODS = new Set(['GET', 'POST']);
+const ALLOWED_AGENT_METHODS = new Set(['POST']);
+
+const WINDOWS_RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
 
 interface StandardErrorResponse {
   error: string;
@@ -96,11 +102,11 @@ const sendError = (
 // Health check para el balanceador / gateway
 app.get('/health', (req, res) => {
   const traceId = (req as any).traceId || randomUUID();
-  res.json({ status: 'ok', service: 'appcraft-engine', version: '1.0.0', traceId, timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', service: 'appcraft-engine', version: '1.0.0', instanceId: APP_INSTANCE_ID, traceId, timestamp: new Date().toISOString() });
 });
 
 // Telemetría verídica: origen explícito, unidades y estados LIVE, DEMO, NO_DATA, ERROR
-app.get('/api/data', async (req, res) => {
+app.get('/api/data', requireProxyAuth, async (req, res) => {
   const traceId = (req as any).traceId;
   const rawSource = req.query.source;
   const rawType = req.query.type;
@@ -246,8 +252,16 @@ app.get('/api/data', async (req, res) => {
 
 // Proxy transparente hacia api.solusol.net
 app.all('/api/solusol/*', requireProxyAuth, async (req, res) => {
+  if (!ALLOWED_SOLUSOL_METHODS.has(req.method)) {
+    return sendError(res, 405, 'ERR_METHOD_NOT_ALLOWED', `Method ${req.method} not allowed on SoluSol proxy.`, (req as any).traceId);
+  }
   const traceId = (req as any).traceId;
   const targetPath = req.path.replace(/^\/api\/solusol\/?/, '');
+
+  if (targetPath.includes('..') || targetPath.startsWith('/')) {
+    return sendError(res, 400, 'ERR_INVALID_PROXY_PATH', 'Invalid path traversal pattern.', traceId);
+  }
+
   const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
   const targetUrl = `${SOLUSOL_BASE_URL}/${targetPath}${queryString}`;
 
@@ -274,8 +288,16 @@ app.all('/api/solusol/*', requireProxyAuth, async (req, res) => {
 
 // Proxy transparente hacia santiago.solusol.net (Santiago Autonomous Agent)
 app.all('/api/agent/*', requireProxyAuth, async (req, res) => {
+  if (!ALLOWED_AGENT_METHODS.has(req.method)) {
+    return sendError(res, 405, 'ERR_METHOD_NOT_ALLOWED', `Method ${req.method} not allowed on Santiago agent proxy.`, (req as any).traceId);
+  }
   const traceId = (req as any).traceId;
   const targetPath = req.path.replace(/^\/api\/agent\/?/, '');
+
+  if (targetPath.includes('..') || targetPath.startsWith('/')) {
+    return sendError(res, 400, 'ERR_INVALID_PROXY_PATH', 'Invalid path traversal pattern.', traceId);
+  }
+
   const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
   const targetUrl = `${SANTIAGO_AGENT_URL}/${targetPath}${queryString}`;
 
@@ -565,6 +587,37 @@ Convert the provided dashboard layout JSON specification into a complete, idioma
   }
 };
 
+function validateProjectFiles(files: any[]): { valid: boolean; error?: string } {
+  if (!Array.isArray(files) || files.length === 0) {
+    return { valid: false, error: 'Project must contain a non-empty array of files.' };
+  }
+  if (files.length > 100) {
+    return { valid: false, error: 'Project exceeds maximum file count limit (100).' };
+  }
+  const seenPaths = new Set<string>();
+  for (const f of files) {
+    if (!f || typeof f.path !== 'string' || typeof f.content !== 'string') {
+      return { valid: false, error: 'Each file entry must have string "path" and "content".' };
+    }
+    const normalized = f.path.replace(/\\/g, '/').trim();
+    if (!normalized || path.isAbsolute(normalized) || normalized.includes('..') || normalized.startsWith('/')) {
+      return { valid: false, error: `Invalid or unsafe path format: ${f.path}` };
+    }
+    const filename = path.basename(normalized);
+    if (WINDOWS_RESERVED_NAMES.test(filename)) {
+      return { valid: false, error: `Path contains reserved Windows device name: ${filename}` };
+    }
+    if (seenPaths.has(normalized)) {
+      return { valid: false, error: `Duplicate file path detected: ${normalized}` };
+    }
+    if (f.content.length > 1024 * 1024) {
+      return { valid: false, error: `Individual file exceeds size limit of 1MB: ${normalized}` };
+    }
+    seenPaths.add(normalized);
+  }
+  return { valid: true };
+}
+
 const handleGenerateProject = async (req: express.Request, res: express.Response) => {
   const traceId = (req as any).traceId;
   const { prompt, stack = 'csharp', provider = 'solusol', model = 'llama3.2' } = req.body || {};
@@ -624,6 +677,10 @@ Return ONLY a valid JSON object matching this schema:
       if (!projectData.appName || !Array.isArray(projectData.files)) {
         throw new Error('Malformed project schema from LLM.');
       }
+      const validation = validateProjectFiles(projectData.files);
+      if (!validation.valid) {
+        return sendError(res, 502, 'ERR_INVALID_GENERATED_PROJECT', validation.error || 'Project failed safety validation.', traceId);
+      }
       projectData.stack = stack;
       return res.json(projectData);
     } catch (error: any) {
@@ -648,6 +705,10 @@ Return ONLY a valid JSON object matching this schema:
         const data = await santiagoRes.json();
         if (!data.appName || !Array.isArray(data.files)) {
           throw new Error('Malformed project schema received from Santiago Agent.');
+        }
+        const validation = validateProjectFiles(data.files);
+        if (!validation.valid) {
+          return sendError(res, 502, 'ERR_INVALID_GENERATED_PROJECT', validation.error || 'Project failed safety validation.', traceId);
         }
         data.stack = stack;
         return res.json(data);
@@ -674,6 +735,10 @@ Return ONLY a valid JSON object matching this schema:
       if (!data.appName || !Array.isArray(data.files)) {
         throw new Error('Malformed project schema received from SoluSol API.');
       }
+      const validation = validateProjectFiles(data.files);
+      if (!validation.valid) {
+        return sendError(res, 502, 'ERR_INVALID_GENERATED_PROJECT', validation.error || 'Project failed safety validation.', traceId);
+      }
       data.stack = stack;
       return res.json(data);
     }
@@ -684,7 +749,7 @@ Return ONLY a valid JSON object matching this schema:
   }
 };
 
-app.post('/api/generate-project', handleGenerateProject);
+app.post('/api/generate-project', requireProxyAuth, handleGenerateProject);
 
 const handleInterview = async (req: express.Request, res: express.Response) => {
   const traceId = (req as any).traceId;
@@ -800,9 +865,11 @@ Return ONLY valid JSON matching this schema:
   });
 };
 
-app.post('/api/interview', handleInterview);
-app.post('/export', handleExportCode);
-app.post('/api/export-code', handleExportCode);
+app.post('/api/interview', requireProxyAuth, handleInterview);
+app.post('/export', requireProxyAuth, handleExportCode);
+app.post('/api/export-code', requireProxyAuth, handleExportCode);
+app.post('/generate', requireProxyAuth, handleGenerateLayout);
+app.post('/api/generate-dashboard', requireProxyAuth, handleGenerateLayout);
 
 // Middleware global de captura de excepciones (Zero Trust Sanitization)
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -833,7 +900,10 @@ async function startServer() {
       path.resolve(baseDir, '..', 'dist'),
       path.resolve(process.cwd(), 'dist'),
     ];
-    const clientDist = candidatePaths.find((p) => fs.existsSync(p)) || candidatePaths[0];
+    const clientDist = candidatePaths.find((p) => fs.existsSync(path.join(p, 'index.html')));
+    if (!clientDist) {
+      throw new Error('[AppCraft Engine] Frontend bundle not found: missing dist/index.html');
+    }
     app.use(express.static(clientDist));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(clientDist, 'index.html'));

@@ -11,19 +11,28 @@ app.commandLine.appendSwitch('disable-gpu');
 
 let serverProcess = null;
 const SERVER_PORT = process.env.PORT || 3000;
-const HEALTH_URL = `http://127.0.0.1:${SERVER_PORT}/health`;
 const INTERNAL_SESSION_KEY = crypto.randomUUID();
+const APP_INSTANCE_ID = crypto.randomUUID();
+const HEALTH_URL = `http://127.0.0.1:${SERVER_PORT}/health`;
 
-function waitForServer(url, timeoutMs = 20000) {
+function waitForServer(url, expectedInstanceId, timeoutMs = 20000) {
   const startTime = Date.now();
   return new Promise((resolve, reject) => {
     const check = () => {
       const req = http.get(url, (res) => {
-        if (res.statusCode === 200) {
-          resolve();
-        } else {
+        let rawData = '';
+        res.on('data', (chunk) => { rawData += chunk; });
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            try {
+              const body = JSON.parse(rawData);
+              if (body.service === 'appcraft-engine' && body.instanceId === expectedInstanceId) {
+                return resolve();
+              }
+            } catch {}
+          }
           retry();
-        }
+        });
       });
 
       req.on('error', () => {
@@ -54,6 +63,7 @@ function startBackendProcess() {
     PORT: String(SERVER_PORT),
     NODE_ENV: 'production',
     APP_INTERNAL_SECRET: INTERNAL_SESSION_KEY,
+    APP_INSTANCE_ID: APP_INSTANCE_ID,
     ELECTRON_RUN_AS_NODE: '1',
   };
 
@@ -78,6 +88,15 @@ function startBackendProcess() {
       detached: false,
     });
   }
+
+  serverProcess.on('error', (err) => {
+    console.error('[Electron Container] Fallo en proceso servidor hijo:', err);
+  });
+  serverProcess.on('exit', (code, signal) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[Electron Container] Servidor hijo termino anormalmente con codigo ${code}, signal: ${signal}`);
+    }
+  });
 }
 
 function createWindow(targetUrl) {
@@ -95,23 +114,45 @@ function createWindow(targetUrl) {
     },
   });
 
-  // Inyectar la clave interna ÚNICAMENTE si la petición proviene del webContents legítimo de la ventana principal
-  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    const isTargetServer = details.url.startsWith(`http://127.0.0.1:${SERVER_PORT}`) || 
-                           details.url.startsWith(`http://localhost:${SERVER_PORT}`);
-    const isFromMainWindow = mainWindow && details.webContentsId === mainWindow.webContents.id;
+  // Content Security Policy restrictiva para mitigar riesgos de inyección XSS
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self' http://127.0.0.1:* http://localhost:*; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:* https://api.solusol.net https://santiago.solusol.net;"
+        ]
+      }
+    });
+  });
 
-    if (isTargetServer && isFromMainWindow) {
-      details.requestHeaders['X-App-Internal-Key'] = INTERNAL_SESSION_KEY;
-    }
+  // Validación estructural estricta de URL y filtrado de origen para inyección del secreto de sesión
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    try {
+      const parsed = new URL(details.url);
+      const isTargetServer = parsed.protocol === 'http:' &&
+        (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') &&
+        parsed.port === String(SERVER_PORT);
+      const isFromMainWindow = mainWindow && details.webContentsId === mainWindow.webContents.id;
+      const isAllowedResourceType = ['mainFrame', 'subFrame', 'xhr', 'fetch'].includes(details.resourceType);
+
+      if (isTargetServer && isFromMainWindow && isAllowedResourceType) {
+        details.requestHeaders['X-App-Internal-Key'] = INTERNAL_SESSION_KEY;
+      }
+    } catch {}
     callback({ requestHeaders: details.requestHeaders });
   });
 
   mainWindow.loadURL(targetUrl);
 
-  // Abrir enlaces externos en el navegador predeterminado de Windows
+  // Restricción estricta de protocolos permitidos al abrir enlaces externos
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        shell.openExternal(url);
+      }
+    } catch {}
     return { action: 'deny' };
   });
 }
@@ -123,7 +164,7 @@ app.whenReady().then(async () => {
   } else {
     try {
       startBackendProcess();
-      await waitForServer(HEALTH_URL);
+      await waitForServer(HEALTH_URL, APP_INSTANCE_ID);
       createWindow(`http://127.0.0.1:${SERVER_PORT}`);
     } catch (err) {
       console.error('Fallo critico al iniciar el backend local:', err);
