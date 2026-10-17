@@ -32,7 +32,6 @@ app.use(traceContext);
 
 const INTERNAL_API_SECRET = process.env.APP_INTERNAL_SECRET || '';
 const APP_INSTANCE_ID = process.env.APP_INSTANCE_ID || '';
-const requireProxyAuth = createRequireProxyAuth(INTERNAL_API_SECRET);
 const IS_PRODUCTION = process.env.NODE_ENV === 'production' || process.argv.includes('--production');
 
 const SOLUSOL_BASE_URL = (process.env.SOLUSOL_API_URL || 'https://api.solusol.net').replace(/\/+$/, '');
@@ -98,9 +97,14 @@ const parseReferenceMedia: express.RequestHandler = (req, res, next) => {
 // Configuración de CORS
 const defaultAllowedOrigins = IS_PRODUCTION
   ? ['https://apps.solusol.net']
-  : ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000'];
+  : [
+      'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000',
+      `http://localhost:${Number(process.env.PORT) || 3000}`,
+      `http://127.0.0.1:${Number(process.env.PORT) || 3000}`,
+    ];
 const configuredOrigin = process.env.ALLOWED_ORIGIN ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim()) : [];
 const allowedOrigins = new Set([...defaultAllowedOrigins, ...configuredOrigin]);
+const requireProxyAuth = createRequireProxyAuth(INTERNAL_API_SECRET, allowedOrigins);
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;

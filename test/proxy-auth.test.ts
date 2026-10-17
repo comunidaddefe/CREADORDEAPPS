@@ -84,3 +84,31 @@ test('Proxy Auth Middleware - Autorizacion exitosa mediante esquema Bearer Token
   assert.equal(ctx.getStatus(), 200);
   assert.equal(ctx.getJson(), null);
 });
+
+test('Proxy Auth Middleware - Autoriza navegador del mismo origen permitido', () => {
+  const middleware = createRequireProxyAuth('', new Set(['http://127.0.0.1:3000']));
+  const ctx = createMockContext({
+    origin: 'http://127.0.0.1:3000',
+    'sec-fetch-site': 'same-origin',
+    host: '127.0.0.1:3000',
+  });
+
+  middleware(ctx.req, ctx.res, ctx.next);
+
+  assert.equal(ctx.isNextCalled(), true);
+  assert.equal(ctx.getStatus(), 200);
+});
+
+test('Proxy Auth Middleware - Sigue bloqueando navegador de origen externo', () => {
+  const middleware = createRequireProxyAuth('', new Set(['http://127.0.0.1:3000']));
+  const ctx = createMockContext({
+    origin: 'https://malicious.example',
+    'sec-fetch-site': 'cross-site',
+    host: '127.0.0.1:3000',
+  });
+
+  middleware(ctx.req, ctx.res, ctx.next);
+
+  assert.equal(ctx.isNextCalled(), false);
+  assert.equal(ctx.getStatus(), 403);
+});
