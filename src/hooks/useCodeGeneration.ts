@@ -10,6 +10,7 @@ interface UseCodeGenerationProps {
   targetStack: LanguageStack;
   provider: LLMProvider;
   ollamaModel: string;
+  mediaFiles: File[];
   dashboard: DashboardWidget[];
   onApplyLayout: (layout: DashboardWidget[]) => void;
   onSelectWidget: (id: string | null) => void;
@@ -20,6 +21,7 @@ export function useCodeGeneration({
   targetStack,
   provider,
   ollamaModel,
+  mediaFiles,
   dashboard,
   onApplyLayout,
   onSelectWidget,
@@ -39,15 +41,32 @@ export function useCodeGeneration({
     setTimeout(() => setStatusMessage(null), durationMs);
   }, []);
 
+  const sendGenerationRequest = useCallback((url: string, payload: Record<string, string>) => {
+    const requestPayload = { ...payload, provider };
+
+    if (mediaFiles.length === 0) {
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestPayload),
+      });
+    }
+
+    const formData = new FormData();
+    Object.entries(requestPayload).forEach(([key, value]) => formData.set(key, value));
+    mediaFiles.forEach((file) => formData.append('media', file, file.name));
+    return fetch(url, { method: 'POST', body: formData });
+  }, [mediaFiles, provider]);
+
   const generateDashboard = useCallback(async () => {
     if (!prompt.trim()) return;
     setIsGenerating(true);
     setStatusMessage(null);
     try {
-      const response = await fetch('/api/generate-dashboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, stack: targetStack, provider, model: ollamaModel }),
+      const response = await sendGenerationRequest('/api/generate-dashboard', {
+        prompt,
+        stack: targetStack,
+        model: ollamaModel,
       });
       const data = await response.json();
       if (!response.ok) {
@@ -63,7 +82,7 @@ export function useCodeGeneration({
     } finally {
       setIsGenerating(false);
     }
-  }, [prompt, targetStack, provider, ollamaModel, onApplyLayout, onSelectWidget, onViewModeChange]);
+  }, [prompt, targetStack, provider, ollamaModel, onApplyLayout, onSelectWidget, onViewModeChange, sendGenerationRequest]);
 
   const generateFullApp = useCallback(async (promptOverride?: string) => {
     const activePrompt = (promptOverride ?? prompt).trim();
@@ -71,10 +90,10 @@ export function useCodeGeneration({
     setIsGenerating(true);
     setStatusMessage(null);
     try {
-      const response = await fetch('/api/generate-project', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: activePrompt, stack: targetStack, provider, model: ollamaModel }),
+      const response = await sendGenerationRequest('/api/generate-project', {
+        prompt: activePrompt,
+        stack: targetStack,
+        model: ollamaModel,
       });
       const data = await response.json();
       if (!response.ok) {
@@ -91,7 +110,7 @@ export function useCodeGeneration({
     } finally {
       setIsGenerating(false);
     }
-  }, [prompt, targetStack, provider, ollamaModel, onViewModeChange]);
+  }, [prompt, targetStack, provider, ollamaModel, onViewModeChange, sendGenerationRequest]);
 
   const synthesizeTargetCode = useCallback(async () => {
     if (dashboard.length === 0) return;

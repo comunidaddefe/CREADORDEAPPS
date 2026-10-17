@@ -1,4 +1,5 @@
 import React from 'react';
+import { SlidersHorizontal, Sparkles } from 'lucide-react';
 import type { DashboardWidget } from '../../types/dashboard';
 
 interface PropertiesPanelProps {
@@ -14,6 +15,7 @@ interface PropertiesPanelProps {
     delete: string;
     selectToEdit: string;
   };
+  lang: 'en' | 'es';
 }
 
 const GRID_PRESETS = [
@@ -30,14 +32,22 @@ export function PropertiesPanel({
   onUpdateColSpan,
   onDelete,
   labels,
+  lang,
 }: PropertiesPanelProps) {
   return (
-    <aside className="w-72 border-l border-slate-200 bg-white p-5 flex flex-col shrink-0 overflow-y-auto">
-      <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">
-        {labels.properties}
-      </h2>
+    <aside className="properties-sidebar w-full md:w-60 xl:w-72 border-l border-[var(--app-line)] bg-white p-4 xl:p-5 flex flex-col shrink-0 overflow-y-auto max-h-64 md:max-h-none">
+      <div className="flex items-center gap-2 mb-4">
+        <SlidersHorizontal size={15} className="text-[var(--app-green)]" />
+        <h2 className="text-[11px] font-bold text-[var(--app-green)] uppercase tracking-wide">
+          {labels.properties}
+        </h2>
+      </div>
       {selectedWidget ? (
         <div className="flex flex-col gap-4 text-xs">
+          <div className="rounded-md bg-emerald-50 border border-emerald-100 px-3 py-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-800">{selectedWidget.type.replace('_', ' ')}</span>
+            <p className="text-[11px] text-emerald-700 mt-0.5 truncate">{selectedWidget.props.data_source}</p>
+          </div>
           <div>
             <label htmlFor="widget-title" className="block text-slate-600 mb-1 font-medium">{labels.propTitle}</label>
             <input
@@ -111,9 +121,13 @@ export function PropertiesPanel({
           </div>
         </div>
       ) : (
-        <p className="text-xs text-slate-400 leading-relaxed">
-          {labels.selectToEdit}
-        </p>
+        <div className="flex flex-col items-center text-center rounded-md border border-dashed border-slate-200 bg-slate-50/70 px-4 py-8">
+          <span className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center mb-3">
+            <Sparkles size={17} />
+          </span>
+          <p className="text-xs font-semibold text-slate-700">{labels.selectToEdit}</p>
+          <p className="text-[11px] text-slate-400 leading-relaxed mt-1">{lang === 'es' ? 'Ajusta el nombre, el origen de datos y el espacio que ocupa.' : 'Adjust its name, data source, and layout.'}</p>
+        </div>
       )}
     </aside>
   );

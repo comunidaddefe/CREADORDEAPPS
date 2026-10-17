@@ -61,10 +61,16 @@ Todo el ciclo de vida del software, refactorizaciones y generación de código s
 Create a `.env` file in the root directory:
 
 ```env
-SOLUSOL_API_URL=https://api.solusol.net
-SOLUSOL_API_KEY=your_solusol_token_optional
+HOST=127.0.0.1
 PORT=3000
+ALLOWED_ORIGIN=https://apps.solusol.net
+SOLUSOL_API_URL=https://api.solusol.net
+SOLUSOL_API_KEY=your_server_side_bearer_token
+SANTIAGO_AGENT_URL=https://santiago.solusol.net
+SANTIAGO_API_KEY=your_server_side_agent_token
 ```
+
+Keep upstream tokens on the server. Do not add them to frontend code, browser storage, or the repository.
 
 ### 3. Install Dependencies
 
@@ -86,8 +92,19 @@ Navigate to `http://localhost:3000` to access the visual workspace.
 
 ```bash
 npm run build       # Bundles client into dist/
-NODE_ENV=production tsx server.ts
+npm start
 ```
+
+### 6. Public deployment domains
+
+* The web application is published at `https://apps.solusol.net`.
+* The upstream gateway is `https://api.solusol.net`; the server uses it through `SOLUSOL_API_URL`.
+* Build with `npm ci` and `npm run build`, then run `npm start` with `NODE_ENV=production`, `HOST=127.0.0.1`, and `PORT=3000`.
+* Configure the HTTPS reverse proxy for `apps.solusol.net` to forward requests to `http://127.0.0.1:3000`. Keep TLS termination and public DNS at the hosting provider.
+* Set `ALLOWED_ORIGIN=https://apps.solusol.net`. Production CORS no longer includes development localhost origins by default.
+* Configure `SOLUSOL_API_KEY` in the host's secret/environment settings. The telemetry endpoint is protected; without this token the dashboard will report an access error instead of showing fabricated live values.
+* The app accepts up to 4 JPEG/PNG/WebP/MP4/WebM references, 6 MB per file and 12 MB combined. It sends them to the existing SoluSol generation endpoints in a `references` array (`name`, `mimeType`, `dataBase64`); the API must accept and process that field for multimodal generation to work.
+* Verify the deployment with `GET https://apps.solusol.net/health` and confirm the upstream separately with `GET https://api.solusol.net/api/health`.
 
 ---
 

@@ -23,39 +23,62 @@ export const createTelemetryController = (solusolBaseUrl: string, solusolApiKey?
     const uptime = process.uptime();
     const mem = process.memoryUsage();
 
-    // Integración Upstream con SoluSol Cloud
+    // SoluSol protege el endpoint administrativo y requiere un token configurado en el servidor.
     if (source.startsWith('solusol.') || source.startsWith('solusol/')) {
       const subPath = source.replace(/^solusol[./]/, '');
-      try {
-        const solusolRes = await fetch(
-          `${solusolBaseUrl}/telemetry?source=${encodeURIComponent(subPath)}&type=${encodeURIComponent(type)}`,
-          {
-            signal: AbortSignal.timeout(5000),
-            headers: {
-              Accept: 'application/json',
-              'X-Trace-Id': traceId,
-              ...(solusolApiKey ? { Authorization: `Bearer ${solusolApiKey}` } : {}),
-            },
-          }
-        );
+      const errorMetric = (description: string) => res.json({
+        origin: 'api.solusol.net',
+        status: 'ERROR',
+        unit: 'none',
+        updatedAt,
+        description,
+      });
 
-        if (solusolRes.ok) {
-          const payload = await solusolRes.json();
-          return res.json({
-            origin: 'solusol.cloud',
-            status: 'LIVE',
-            updatedAt,
-            ...payload,
-          });
-        }
-      } catch (err: any) {
-        return res.json({
-          origin: 'solusol.cloud',
-          status: 'ERROR',
-          unit: 'none',
-          updatedAt,
-          description: `Error connecting to upstream api.solusol.net: ${err.message || 'Timeout'}`,
+      if (!solusolApiKey) {
+        return errorMetric('Falta configurar SOLUSOL_API_KEY para consultar la telemetría protegida.');
+      }
+
+      try {
+        const telemetryUrl = new URL('/api/v1/admin/telemetry', `${solusolBaseUrl.replace(/\/+$/, '')}/`);
+        telemetryUrl.searchParams.set('source', subPath);
+        telemetryUrl.searchParams.set('type', type);
+        const solusolRes = await fetch(telemetryUrl, {
+          method: 'GET',
+          signal: AbortSignal.timeout(5000),
+          headers: {
+            Accept: 'application/json',
+            'X-Trace-Id': traceId,
+            Authorization: `Bearer ${solusolApiKey}`,
+          },
         });
+
+        if (!solusolRes.ok) {
+          return errorMetric(`SoluSol respondió HTTP ${solusolRes.status}. Comprueba la clave y el acceso a telemetría.`);
+        }
+
+        const responsePayload: unknown = await solusolRes.json();
+        const envelope = responsePayload && typeof responsePayload === 'object'
+          ? responsePayload as Record<string, unknown>
+          : null;
+        const metricPayload = envelope?.data && typeof envelope.data === 'object'
+          ? envelope.data as Record<string, unknown>
+          : envelope;
+        const hasMetricData = metricPayload && ['value', 'series', 'points', 'rows', 'items']
+          .some((field) => field in metricPayload);
+
+        if (!metricPayload || !hasMetricData) {
+          return errorMetric('La API respondió, pero el formato no contiene una métrica compatible con este widget.');
+        }
+
+        return res.json({
+          ...metricPayload,
+          origin: 'api.solusol.net',
+          status: 'LIVE',
+          updatedAt: typeof metricPayload.updatedAt === 'string' ? metricPayload.updatedAt : updatedAt,
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Timeout';
+        return errorMetric(`No se pudo consultar api.solusol.net: ${message}`);
       }
     }
 

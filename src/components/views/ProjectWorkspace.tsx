@@ -1,4 +1,6 @@
 import React from 'react';
+import JSZip from 'jszip';
+import { Download, Package } from 'lucide-react';
 import type { GeneratedProject } from '../../types/dashboard';
 
 interface ProjectWorkspaceProps {
@@ -8,6 +10,7 @@ interface ProjectWorkspaceProps {
   activeTab: 'editor' | 'readme';
   onSelectTab: (tab: 'editor' | 'readme') => void;
   onNotify?: (message: string) => void;
+  lang: 'en' | 'es';
 }
 
 export function ProjectWorkspace({
@@ -17,6 +20,7 @@ export function ProjectWorkspace({
   activeTab,
   onSelectTab,
   onNotify,
+  lang,
 }: ProjectWorkspaceProps) {
   if (!project) {
     return (
@@ -47,6 +51,31 @@ export function ProjectWorkspace({
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadProject = async () => {
+    const archive = new JSZip();
+    project.files.forEach((file) => archive.file(file.path, file.content));
+    if (project.readme && !project.files.some((file) => file.path.toLowerCase() === 'readme.md')) {
+      archive.file('README.md', project.readme);
+    }
+    archive.file('appcraft.manifest.json', JSON.stringify(project, null, 2));
+
+    const safeName = (project.appName || 'appcraft-project')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'appcraft-project';
+    const blob = await archive.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${safeName}.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    onNotify?.(lang === 'es' ? 'Proyecto descargado como ZIP' : 'Project downloaded as ZIP');
   };
 
   const handleCopyContent = async () => {
@@ -84,10 +113,19 @@ export function ProjectWorkspace({
           </button>
           <button
             type="button"
+            onClick={handleDownloadProject}
+            className="inline-flex items-center gap-1.5 text-xs bg-[var(--app-green)] hover:bg-[#1d573b] text-white px-3 py-1.5 rounded font-semibold"
+            title={lang === 'es' ? 'Descargar todos los archivos del proyecto' : 'Download all project files'}
+          >
+            <Package size={14} />
+            {lang === 'es' ? 'Descargar ZIP' : 'Download ZIP'}
+          </button>
+          <button
+            type="button"
             onClick={handleExportManifest}
             className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 px-2.5 py-1.5 rounded font-medium"
           >
-            Exportar Manifest
+            {lang === 'es' ? 'Manifiesto JSON' : 'JSON manifest'}
           </button>
         </div>
       </div>

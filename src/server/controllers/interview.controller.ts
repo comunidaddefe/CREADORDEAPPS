@@ -47,7 +47,7 @@ Return ONLY valid JSON matching this schema:
       } catch {}
     }
 
-    if (provider === 'solusol' && santiagoService.isConfigured) {
+    if (provider === 'solusol') {
       try {
         const santiagoRes = await santiagoService.post(
           'api/interview',
@@ -59,6 +59,19 @@ Return ONLY valid JSON matching this schema:
           const data = await santiagoRes.json();
           return res.json(data);
         }
+      } catch {}
+
+      // Fallback transparente a Ollama local si el upstream remoto no responde o no existe DNS
+      try {
+        const localData = await queryOllama({
+          model,
+          system: systemInstruction,
+          prompt: `User history: ${JSON.stringify(history)}\nUser input: "${message}". Target stack: "${stack}". Return ONLY valid JSON.`,
+          format: 'json',
+          timeoutMs: 15000,
+        });
+        const rawText = extractBalancedJson(localData.response || '{}', '{', '}');
+        return res.json(JSON.parse(rawText));
       } catch {}
     }
 

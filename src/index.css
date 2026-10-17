@@ -1,11 +1,119 @@
 @import "tailwindcss";
+@import "@fontsource-variable/dm-sans";
+@import "@fontsource-variable/archivo";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+@theme {
+  --font-sans: "DM Sans Variable", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --font-display: "Archivo Variable", sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  --app-ink: #18352b;
+  --app-green: #246747;
+  --app-lime: #d6f36a;
+  --app-amber: #e8a63a;
+  --app-canvas: #f4f7f1;
+  --app-line: #dce5dc;
+  --app-text-strong: #18352b;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --app-ink: #18352b;
+  --app-green: #8fcba4;
+  --app-lime: #d6f36a;
+  --app-amber: #f0ba58;
+  --app-canvas: #111a16;
+  --app-line: #34473d;
+  --app-text-strong: #e6efe9;
+}
 
 @layer base {
   body {
     @apply font-sans text-slate-900 antialiased;
-    font-family: 'Plus Jakarta Sans', sans-serif;
+    background: var(--app-canvas);
   }
   h1, h2, h3 {
-    @apply font-bold tracking-tight;
+    font-family: var(--font-display);
+    font-weight: 650;
+    letter-spacing: 0;
   }
+}
+
+:root[data-theme='dark'] body {
+  color: #e5eee8;
+}
+
+:root[data-theme='dark'] .bg-white { background-color: #18231d; }
+:root[data-theme='dark'] .bg-slate-50 { background-color: #1d2923; }
+:root[data-theme='dark'] .bg-slate-100 { background-color: #25332c; }
+:root[data-theme='dark'] .bg-slate-200 { background-color: #304139; }
+:root[data-theme='dark'] .bg-white\/90 { background-color: rgba(24, 35, 29, 0.94); }
+:root[data-theme='dark'] .bg-white\/70 { background-color: rgba(24, 35, 29, 0.82); }
+:root[data-theme='dark'] .bg-slate-50\/70 { background-color: rgba(29, 41, 35, 0.82); }
+:root[data-theme='dark'] .bg-slate-50\/50 { background-color: rgba(29, 41, 35, 0.72); }
+:root[data-theme='dark'] .text-slate-900 { color: #edf4ef; }
+:root[data-theme='dark'] .text-slate-800 { color: #dce7e0; }
+:root[data-theme='dark'] .text-slate-700 { color: #c6d2ca; }
+:root[data-theme='dark'] .text-slate-600 { color: #b5c2ba; }
+:root[data-theme='dark'] .text-slate-500 { color: #9aaba0; }
+:root[data-theme='dark'] .text-slate-400 { color: #8a9b91; }
+:root[data-theme='dark'] .border-slate-100 { border-color: #293a31; }
+:root[data-theme='dark'] .border-slate-200 { border-color: #34473d; }
+:root[data-theme='dark'] .border-slate-300 { border-color: #465a4f; }
+:root[data-theme='dark'] .bg-emerald-50 { background-color: #183628; }
+:root[data-theme='dark'] .bg-emerald-100 { background-color: #214732; }
+:root[data-theme='dark'] .text-emerald-800 { color: #a9dfb8; }
+:root[data-theme='dark'] .text-emerald-700 { color: #8dd3a2; }
+:root[data-theme='dark'] .border-emerald-100 { border-color: #2d5940; }
+:root[data-theme='dark'] .bg-amber-100 { background-color: #49391f; }
+:root[data-theme='dark'] .text-amber-800 { color: #f0c876; }
+:root[data-theme='dark'] .bg-rose-50 { background-color: #422b2d; }
+:root[data-theme='dark'] .text-rose-700 { color: #f0a0a0; }
+:root[data-theme='dark'] input,
+:root[data-theme='dark'] textarea,
+:root[data-theme='dark'] select {
+  color: #e5eee8;
+  color-scheme: dark;
+}
+:root[data-theme='dark'] option,
+:root[data-theme='dark'] optgroup {
+  background-color: #1d2923;
+  color: #e5eee8;
+}
+:root[data-theme='dark'] .app-topbar .bg-slate-900,
+:root[data-theme='dark'] .properties-sidebar .bg-slate-900 {
+  background-color: var(--app-lime);
+  color: #18352b;
+}
+:root[data-theme='dark'] .canvas-stage {
+  background-image:
+    linear-gradient(rgba(143, 203, 164, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(143, 203, 164, 0.055) 1px, transparent 1px);
+}
+
+.canvas-stage {
+  background-color: var(--app-canvas);
+  background-image:
+    linear-gradient(rgba(36, 103, 71, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(36, 103, 71, 0.045) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.workspace-enter {
+  animation: workspace-enter 360ms cubic-bezier(0.2, 0.7, 0.25, 1) both;
+}
+
+@keyframes workspace-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-enter { animation: none; }
 }

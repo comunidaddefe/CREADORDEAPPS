@@ -1,4 +1,5 @@
 import React from 'react';
+import { Activity, AlertCircle, Copy, GripVertical, LoaderCircle, Trash2, WifiOff } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { DashboardWidget, MetricResponse } from '../types/dashboard';
@@ -9,6 +10,7 @@ interface SortableWidgetCardProps {
   isSelected: boolean;
   metric: MetricResponse | null | undefined;
   isLoading: boolean;
+  lang: 'en' | 'es';
   onDuplicate: () => void;
   onSelect: () => void;
   onDelete: () => void;
@@ -19,6 +21,7 @@ export function SortableWidgetCard({
   isSelected,
   metric,
   isLoading,
+  lang,
   onDuplicate,
   onSelect,
   onDelete,
@@ -34,13 +37,16 @@ export function SortableWidgetCard({
     opacity: isDragging ? 0.4 : 1,
   };
 
+  const t = (english: string, spanish: string) => lang === 'es' ? spanish : english;
+  const metricValue = metric?.value ?? (metric?.status === 'DEMO' ? comp.props.value : undefined);
+
   const renderStatusBadge = () => {
-    if (isLoading) return <span className="text-[9px] text-amber-500 font-mono">FETCHING</span>;
-    if (!metric) return <span className="text-[9px] text-red-500 font-mono">UNREACHABLE</span>;
-    if (metric.status === 'LIVE') return <span className="text-[9px] text-emerald-600 font-mono font-medium">LIVE ({metric.origin})</span>;
-    if (metric.status === 'DEMO') return <span className="text-[9px] bg-amber-50 text-amber-700 border border-amber-200 px-1 py-0.5 rounded font-mono font-semibold">DEMO MODE</span>;
-    if (metric.status === 'ERROR') return <span className="text-[9px] bg-red-50 text-red-700 border border-red-200 px-1 py-0.5 rounded font-mono font-semibold">ERROR</span>;
-    return <span className="text-[9px] bg-slate-100 text-slate-500 px-1 py-0.5 rounded font-mono">NO DATA</span>;
+    if (isLoading) return <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 font-mono"><LoaderCircle size={12} className="animate-spin" />{t('CONNECTING', 'CONECTANDO')}</span>;
+    if (!metric) return <span className="inline-flex items-center gap-1 text-[11px] text-rose-700 font-mono"><WifiOff size={12} />{t('OFFLINE', 'SIN CONEXIÓN')}</span>;
+    if (metric.status === 'LIVE') return <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-mono font-semibold"><Activity size={12} />{t('LIVE', 'EN VIVO')} · {metric.origin}</span>;
+    if (metric.status === 'DEMO') return <span className="inline-flex items-center gap-1 text-[11px] text-amber-800 font-mono font-semibold"><AlertCircle size={12} />{t('DEMO DATA', 'DATOS DEMO')}</span>;
+    if (metric.status === 'ERROR') return <span className="inline-flex items-center gap-1 text-[11px] text-rose-700 font-mono font-semibold"><AlertCircle size={12} />{t('SOURCE ERROR', 'ERROR DE FUENTE')}</span>;
+    return <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 font-mono"><WifiOff size={12} />{t('NO DATA', 'SIN DATOS')}</span>;
   };
 
   return (
@@ -57,39 +63,39 @@ export function SortableWidgetCard({
         }
       }}
       aria-selected={isSelected}
-      className={`col-span-12 ${getColSpanClass(colSpan)} relative rounded-lg border bg-white p-5 cursor-pointer transition-all shadow-xs ${
-        isSelected ? 'border-slate-900 ring-1 ring-slate-900 focus:outline-none' : 'border-slate-200 hover:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-400'
+      className={`workspace-enter min-w-0 col-span-1 ${getColSpanClass(colSpan)} relative rounded-md border bg-white p-5 cursor-pointer transition-all shadow-[0_3px_12px_rgba(24,53,43,0.045)] ${
+        isSelected ? 'border-emerald-700 ring-2 ring-emerald-700/15 focus:outline-none' : 'border-slate-200 hover:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-700/15'
       }`}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1 flex items-center gap-2">
           <button
             type="button"
-            aria-label="Drag Handle"
+            aria-label={t('Drag widget', 'Mover widget')}
             {...attributes}
             {...listeners}
-            className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-700 p-0.5 rounded text-xs"
+            className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-emerald-800 p-1 rounded"
             onClick={(e) => e.stopPropagation()}
           >
-            ⠿
+            <GripVertical size={15} />
           </button>
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900">{comp.props.title}</h3>
-            <span className="text-[11px] text-slate-400 font-mono">{comp.props.data_source}</span>
+          <div className="min-w-0">
+            <h3 className="line-clamp-2 text-[15px] leading-snug font-semibold text-slate-900" title={comp.props.title}>{comp.props.title}</h3>
+            <span className="block text-[11px] text-slate-400 font-mono truncate">{comp.props.data_source}</span>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="shrink-0 flex items-center gap-1">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onDuplicate();
             }}
-            title="Duplicate widget"
-            aria-label="Duplicate widget"
-            className="text-slate-400 hover:text-slate-700 text-xs p-1"
+            title={t('Duplicate widget', 'Duplicar widget')}
+            aria-label={t('Duplicate widget', 'Duplicar widget')}
+            className="w-8 h-8 inline-flex items-center justify-center rounded text-slate-400 hover:bg-emerald-50 hover:text-emerald-800"
           >
-            ⧉
+            <Copy size={14} />
           </button>
           <button
             type="button"
@@ -97,19 +103,19 @@ export function SortableWidgetCard({
               e.stopPropagation();
               onDelete();
             }}
-            title="Delete widget"
-            aria-label="Delete widget"
-            className="text-slate-400 hover:text-red-600 text-xs p-1"
+            title={t('Delete widget', 'Eliminar widget')}
+            aria-label={t('Delete widget', 'Eliminar widget')}
+            className="w-8 h-8 inline-flex items-center justify-center rounded text-slate-400 hover:bg-rose-50 hover:text-rose-700"
           >
-            ✕
+            <Trash2 size={14} />
           </button>
         </div>
       </div>
 
       {comp.type === 'stat' ? (
         <div className="mt-4 pt-2 border-t border-slate-100">
-          <div className="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
-            {metric?.value || comp.props.value || 'N/A'}
+          <div className="text-3xl font-bold text-slate-900 tabular-nums">
+            {metricValue || '—'}
           </div>
           <div className="text-[11px] mt-1 flex items-center justify-between">
             {renderStatusBadge()}
@@ -131,8 +137,8 @@ export function SortableWidgetCard({
               })}
             </div>
           ) : (
-            <div className="h-24 flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-200 rounded text-slate-400 text-xs">
-              <span>No series available</span>
+            <div className="h-24 flex flex-col items-center justify-center bg-[var(--app-canvas)] border border-dashed border-[var(--app-line)] rounded text-slate-500 text-xs">
+              <span>{isLoading ? t('Waiting for telemetry', 'Esperando telemetría') : t('Check this data source', 'Revisa esta fuente de datos')}</span>
               {renderStatusBadge()}
             </div>
           )}
@@ -156,8 +162,8 @@ export function SortableWidgetCard({
               />
             </svg>
           ) : (
-            <div className="h-24 flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-200 rounded text-slate-400 text-xs">
-              <span>Empty stream</span>
+            <div className="h-24 flex flex-col items-center justify-center bg-[var(--app-canvas)] border border-dashed border-[var(--app-line)] rounded text-slate-500 text-xs">
+              <span>{isLoading ? t('Waiting for telemetry', 'Esperando telemetría') : t('No readings in this period', 'Sin lecturas en este periodo')}</span>
               {renderStatusBadge()}
             </div>
           )}
@@ -169,8 +175,8 @@ export function SortableWidgetCard({
               <table className="w-full text-left text-[11px]">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-400">
-                    <th className="pb-1 font-medium">Key</th>
-                    <th className="pb-1 font-medium text-right">Value</th>
+                    <th className="pb-1 font-medium">{t('Key', 'Dato')}</th>
+                    <th className="pb-1 font-medium text-right">{t('Value', 'Valor')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-600">
@@ -189,8 +195,8 @@ export function SortableWidgetCard({
               </table>
             </div>
           ) : (
-            <div className="h-20 flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-200 rounded text-slate-400 text-xs">
-              <span>No connected table source</span>
+            <div className="h-20 flex flex-col items-center justify-center bg-[var(--app-canvas)] border border-dashed border-[var(--app-line)] rounded text-slate-500 text-xs">
+              <span>{isLoading ? t('Waiting for telemetry', 'Esperando telemetría') : t('No table data available', 'Sin datos de tabla')}</span>
               {renderStatusBadge()}
             </div>
           )}
@@ -207,8 +213,8 @@ export function SortableWidgetCard({
               ))}
             </div>
           ) : (
-            <div className="h-20 flex flex-col items-center justify-center bg-slate-50 border border-dashed border-slate-200 rounded text-slate-400 text-xs">
-              <span>Empty event stream</span>
+            <div className="h-20 flex flex-col items-center justify-center bg-[var(--app-canvas)] border border-dashed border-[var(--app-line)] rounded text-slate-500 text-xs">
+              <span>{isLoading ? t('Waiting for telemetry', 'Esperando telemetría') : t('No events received', 'No se recibieron eventos')}</span>
               {renderStatusBadge()}
             </div>
           )}

@@ -1,5 +1,12 @@
 import 'dotenv/config';
+
+if (process.argv.includes('--production') || process.argv.includes('--prod')) {
+  process.env.NODE_ENV = 'production';
+}
+
 import express from 'express';
+import multer from 'multer';
+import { fileTypeFromBuffer } from 'file-type';
 import fs from 'node:fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
@@ -26,6 +33,7 @@ app.use(traceContext);
 const INTERNAL_API_SECRET = process.env.APP_INTERNAL_SECRET || '';
 const APP_INSTANCE_ID = process.env.APP_INSTANCE_ID || '';
 const requireProxyAuth = createRequireProxyAuth(INTERNAL_API_SECRET);
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || process.argv.includes('--production');
 
 const SOLUSOL_BASE_URL = (process.env.SOLUSOL_API_URL || 'https://api.solusol.net').replace(/\/+$/, '');
 const SOLUSOL_API_KEY = process.env.SOLUSOL_API_KEY || '';
@@ -35,8 +43,62 @@ const SANTIAGO_API_KEY = process.env.SANTIAGO_API_KEY || '';
 const solusolService = new SoluSolService({ baseUrl: SOLUSOL_BASE_URL, apiKey: SOLUSOL_API_KEY });
 const santiagoService = new SantiagoService({ baseUrl: SANTIAGO_AGENT_URL, apiKey: SANTIAGO_API_KEY });
 
+const MAX_REFERENCE_FILES = 4;
+const MAX_REFERENCE_FILE_BYTES = 6 * 1024 * 1024;
+const MAX_REFERENCE_TOTAL_BYTES = 12 * 1024 * 1024;
+const ALLOWED_REFERENCE_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm',
+]);
+const referenceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: MAX_REFERENCE_FILES, fileSize: MAX_REFERENCE_FILE_BYTES },
+  fileFilter: (_req, file, callback) => {
+    if (!ALLOWED_REFERENCE_MIME_TYPES.has(file.mimetype)) {
+      callback(new Error('Unsupported reference media type.'));
+      return;
+    }
+    callback(null, true);
+  },
+}).array('media', MAX_REFERENCE_FILES);
+
+const parseReferenceMedia: express.RequestHandler = (req, res, next) => {
+  referenceUpload(req, res, (error) => {
+    const traceId = (req as any).traceId;
+    if (error) {
+      const tooLarge = error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE';
+      return sendError(
+        res,
+        tooLarge ? 413 : 400,
+        tooLarge ? 'ERR_REFERENCE_TOO_LARGE' : 'ERR_INVALID_REFERENCE_MEDIA',
+        tooLarge
+          ? 'Cada referencia debe pesar 6 MB o menos.'
+          : 'Usa hasta 4 imágenes JPEG, PNG, WebP o videos MP4/WebM.',
+        traceId
+      );
+    }
+
+    const files = Array.isArray((req as any).files) ? (req as any).files as Express.Multer.File[] : [];
+    void (async () => {
+      const totalBytes = files.reduce((total, file) => total + file.size, 0);
+      if (totalBytes > MAX_REFERENCE_TOTAL_BYTES) {
+        return sendError(res, 413, 'ERR_REFERENCE_TOTAL_TOO_LARGE', 'El total de referencias no puede superar 12 MB.', traceId);
+      }
+
+      for (const file of files) {
+        const detected = await fileTypeFromBuffer(file.buffer);
+        if (!detected || detected.mime !== file.mimetype || !ALLOWED_REFERENCE_MIME_TYPES.has(detected.mime)) {
+          return sendError(res, 400, 'ERR_INVALID_REFERENCE_SIGNATURE', 'El contenido del archivo no coincide con una imagen o video permitido.', traceId);
+        }
+      }
+      next();
+    })().catch(() => sendError(res, 400, 'ERR_INVALID_REFERENCE_MEDIA', 'No se pudo validar una de las referencias.', traceId));
+  });
+};
+
 // Configuración de CORS
-const defaultAllowedOrigins = ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000'];
+const defaultAllowedOrigins = IS_PRODUCTION
+  ? ['https://apps.solusol.net']
+  : ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000'];
 const configuredOrigin = process.env.ALLOWED_ORIGIN ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim()) : [];
 const allowedOrigins = new Set([...defaultAllowedOrigins, ...configuredOrigin]);
 
@@ -139,19 +201,19 @@ const { handleGenerateLayout, handleExportCode, handleGenerateProject } =
 const handleInterview = createInterviewController(santiagoService);
 
 app.get('/api/data', rateLimiter, requireProxyAuth, handleTelemetry);
-app.post('/api/generate-project', rateLimiter, concurrencyGuard, requireProxyAuth, handleGenerateProject);
+app.post('/api/generate-project', rateLimiter, concurrencyGuard, requireProxyAuth, parseReferenceMedia, handleGenerateProject);
 app.post('/api/interview', rateLimiter, concurrencyGuard, requireProxyAuth, handleInterview);
 app.post('/export', rateLimiter, concurrencyGuard, requireProxyAuth, handleExportCode);
 app.post('/api/export-code', rateLimiter, concurrencyGuard, requireProxyAuth, handleExportCode);
-app.post('/generate', rateLimiter, concurrencyGuard, requireProxyAuth, handleGenerateLayout);
-app.post('/api/generate-dashboard', rateLimiter, concurrencyGuard, requireProxyAuth, handleGenerateLayout);
+app.post('/generate', rateLimiter, concurrencyGuard, requireProxyAuth, parseReferenceMedia, handleGenerateLayout);
+app.post('/api/generate-dashboard', rateLimiter, concurrencyGuard, requireProxyAuth, parseReferenceMedia, handleGenerateLayout);
 
 // Middleware global de captura de excepciones (Zero Trust Sanitization)
 app.use(errorHandler);
 
 // Configuración de Vite o Estáticos según el entorno
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  if (!IS_PRODUCTION) {
     const { createServer } = await import('vite');
     const vite = await createServer({
       server: {

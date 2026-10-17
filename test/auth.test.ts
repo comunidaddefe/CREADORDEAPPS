@@ -6,6 +6,7 @@ test('Proxy Security Policy - SoluSol allowed endpoints and methods', () => {
   assert.equal(ALLOWED_SOLUSOL_ROUTES.has('telemetry'), true);
   assert.equal(ALLOWED_SOLUSOL_ROUTES.get('telemetry')?.has('GET'), true);
   assert.equal(ALLOWED_SOLUSOL_ROUTES.get('telemetry')?.has('POST'), false);
+  assert.equal(ALLOWED_SOLUSOL_ROUTES.get('api/v1/admin/telemetry')?.has('GET'), true);
 
   assert.equal(ALLOWED_SOLUSOL_ROUTES.has('api/generate-project'), true);
   assert.equal(ALLOWED_SOLUSOL_ROUTES.get('api/generate-project')?.has('POST'), true);

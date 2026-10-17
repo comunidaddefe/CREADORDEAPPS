@@ -79,3 +79,79 @@ test('Telemetry Controller - Retorna estado DEMO para fuentes desconocidas', asy
   assert.equal(data.status, 'DEMO');
   assert.equal(data.unit, 'USD');
 });
+
+test('Telemetry Controller - No simula datos SoluSol cuando falta la clave', async () => {
+  const controller = createTelemetryController('https://api.solusol.net');
+  const ctx = createMockHttp({ source: 'solusol.telemetry.power', type: 'stat' });
+
+  await controller(ctx.req, ctx.res);
+
+  assert.equal(ctx.getStatus(), 200);
+  assert.equal(ctx.getJson().status, 'ERROR');
+  assert.match(String(ctx.getJson().description), /SOLUSOL_API_KEY/);
+});
+
+test('Telemetry Controller - Consulta el endpoint protegido con Bearer y normaliza la métrica', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestUrl = '';
+  let authorization = '';
+  globalThis.fetch = async (input, init) => {
+    requestUrl = String(input);
+    authorization = new Headers(init?.headers).get('Authorization') || '';
+    return new Response(JSON.stringify({ data: { value: '42 kW', unit: 'kW' } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const controller = createTelemetryController('https://api.solusol.net', 'test-token');
+    const ctx = createMockHttp({ source: 'solusol.telemetry.power', type: 'stat' });
+    await controller(ctx.req, ctx.res);
+
+    assert.equal(new URL(requestUrl).pathname, '/api/v1/admin/telemetry');
+    assert.equal(new URL(requestUrl).searchParams.get('source'), 'telemetry.power');
+    assert.equal(new URL(requestUrl).searchParams.get('type'), 'stat');
+    assert.equal(authorization, 'Bearer test-token');
+    assert.equal(ctx.getJson().status, 'LIVE');
+    assert.equal(ctx.getJson().value, '42 kW');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Telemetry Controller - Expone rechazo de credenciales sin fallback demo', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('Unauthorized', { status: 401 });
+
+  try {
+    const controller = createTelemetryController('https://api.solusol.net', 'invalid-token');
+    const ctx = createMockHttp({ source: 'solusol.telemetry.power', type: 'stat' });
+    await controller(ctx.req, ctx.res);
+
+    assert.equal(ctx.getJson().status, 'ERROR');
+    assert.match(String(ctx.getJson().description), /401/);
+    assert.equal(ctx.getJson().value, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Telemetry Controller - No declara LIVE si el esquema no contiene datos de métrica', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ data: { status: 'healthy' } }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const controller = createTelemetryController('https://api.solusol.net', 'test-token');
+    const ctx = createMockHttp({ source: 'solusol.telemetry.power', type: 'stat' });
+    await controller(ctx.req, ctx.res);
+
+    assert.equal(ctx.getJson().status, 'ERROR');
+    assert.match(String(ctx.getJson().description), /formato/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

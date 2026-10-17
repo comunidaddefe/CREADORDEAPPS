@@ -5,6 +5,12 @@ import { queryOllama } from '../services/ollama.service.js';
 import type { SoluSolService } from '../services/solusol.service.js';
 import type { SantiagoService } from '../services/santiago.service.js';
 
+interface UploadedReference {
+  originalname: string;
+  mimetype: string;
+  buffer: Buffer;
+}
+
 export const SUPPORTED_STACKS = [
   'html', 'php', 'tsx', 'go', 'json',
   'javascript', 'typescript', 'html_css', 'vue', 'svelte',
@@ -19,6 +25,11 @@ export const createGenerationController = (
   solusolService: SoluSolService,
   santiagoService: SantiagoService
 ) => {
+  const getReferences = (req: express.Request): UploadedReference[] => {
+    const files = (req as express.Request & { files?: UploadedReference[] }).files;
+    return Array.isArray(files) ? files : [];
+  };
+
   const handleGenerateLayout = async (req: express.Request, res: express.Response) => {
     const traceId = (req as any).traceId;
     const { prompt, stack = 'typescript', provider = 'solusol', model = 'llama3.2' } = req.body || {};
@@ -33,6 +44,7 @@ export const createGenerationController = (
 
     const systemInstruction = `You are an expert dashboard architect specializing in multi-stack applications (${stack}).
 Return a clean JSON array representing the dashboard layout components based on user requirements.
+When image or video references are attached, use them to understand the product, visual style, and workflows. Treat them as references, not as verified facts.
 Every object in the array must follow this schema:
 {
   "id": "string",
@@ -40,6 +52,16 @@ Every object in the array must follow this schema:
   "gridPosition": { "colSpan": 1 to 12 },
   "props": { "title": "string", "data_source": "string", "value": "string (optional)" }
 }`;
+
+    const references = getReferences(req);
+    if (references.length > 0 && provider === 'ollama') {
+      return sendError(res, 400, 'ERR_MULTIMODAL_PROVIDER_REQUIRED', 'Las referencias visuales deben enviarse a SoluSol.', traceId);
+    }
+    const referencePayload = references.map((reference) => ({
+      name: reference.originalname,
+      mimeType: reference.mimetype,
+      dataBase64: reference.buffer.toString('base64'),
+    }));
 
     if (provider === 'ollama') {
       try {
@@ -74,7 +96,7 @@ Every object in the array must follow this schema:
     try {
       const upstreamRes = await solusolService.post(
         'api/generate-dashboard',
-        { prompt, stack, systemInstruction },
+        { prompt, stack, systemInstruction, ...(referencePayload.length > 0 ? { references: referencePayload } : {}) },
         traceId,
         30000
       );
@@ -152,8 +174,19 @@ Follow 'Zero AI Design' policy: clean, human-readable code. No synthetic comment
 
     const systemInstruction = `You are a Principal Software Architect.
 Generate a complete, production-grade multi-file project for stack: "${stack}".
+When image or video references are attached, use them as inspiration for the product concept, layout, and visual details. Do not claim details that are not visible.
 Return ONLY a valid JSON object matching:
 { "appName": "string", "description": "string", "runCommand": "string", "files": [{ "path": "string", "content": "string" }], "readme": "string" }`;
+
+    const references = getReferences(req);
+    if (references.length > 0 && provider === 'ollama') {
+      return sendError(res, 400, 'ERR_MULTIMODAL_PROVIDER_REQUIRED', 'Las referencias visuales requieren el proveedor SoluSol.', traceId);
+    }
+    const referencePayload = references.map((reference) => ({
+      name: reference.originalname,
+      mimeType: reference.mimetype,
+      dataBase64: reference.buffer.toString('base64'),
+    }));
 
     if (provider === 'ollama') {
       try {
@@ -177,7 +210,7 @@ Return ONLY a valid JSON object matching:
       }
     }
 
-    if (provider === 'solusol' && santiagoService.isConfigured) {
+    if (provider === 'solusol' && referencePayload.length === 0 && santiagoService.isConfigured) {
       try {
         const santiagoRes = await santiagoService.post(
           'api/generate-project',
@@ -198,7 +231,12 @@ Return ONLY a valid JSON object matching:
     }
 
     try {
-      const upstreamRes = await solusolService.post('api/generate-project', { prompt, stack, systemInstruction }, traceId, 45000);
+      const upstreamRes = await solusolService.post(
+        'api/generate-project',
+        { prompt, stack, systemInstruction, ...(referencePayload.length > 0 ? { references: referencePayload } : {}) },
+        traceId,
+        45000
+      );
       if (upstreamRes.ok) {
         const data = await upstreamRes.json();
         const validation = validateProjectFiles(data.files);

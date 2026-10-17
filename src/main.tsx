@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import React, { useState, StrictMode } from 'react';
+import { Activity, LoaderCircle, Sun, WifiOff } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -62,8 +63,12 @@ function App() {
   });
   const [provider, setProvider] = useState<LLMProvider>('solusol');
   const [ollamaModel, setOllamaModel] = useState('llama3.2');
+  const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [lang, setLang] = useState<'en' | 'es'>('en');
+  const [lang, setLang] = useState<'en' | 'es'>('es');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    return localStorage.getItem('appcraft_theme') === 'dark' ? 'dark' : 'light';
+  });
   const [viewMode, setViewMode] = useState<'canvas' | 'project' | 'code'>('canvas');
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [jsonModalOpen, setJsonModalOpen] = useState(false);
@@ -108,6 +113,7 @@ function App() {
     targetStack,
     provider,
     ollamaModel,
+    mediaFiles,
     dashboard,
     onApplyLayout: pushToHistory,
     onSelectWidget: setSelectedId,
@@ -131,6 +137,11 @@ function App() {
     localStorage.setItem('appcraft_stack', targetStack);
   }, [targetStack]);
 
+  React.useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('appcraft_theme', theme);
+  }, [theme]);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
@@ -144,6 +155,33 @@ function App() {
   };
 
   const selectedWidget = dashboard.find((c) => c.id === selectedId);
+  const liveCount = dashboard.filter((widget) => liveMetrics[widget.id]?.status === 'LIVE').length;
+  const demoCount = dashboard.filter((widget) => liveMetrics[widget.id]?.status === 'DEMO').length;
+  const errorCount = dashboard.filter((widget) => liveMetrics[widget.id]?.status === 'ERROR').length;
+  const loadingCount = dashboard.filter((widget) => loadingMetrics[widget.id]).length;
+  const isConnecting = loadingCount > 0 && liveCount + demoCount === 0;
+  const isFullyLive = dashboard.length > 0 && liveCount === dashboard.length;
+  const hasSomeData = liveCount + demoCount > 0;
+  const connectionLabel = dashboard.length === 0
+    ? (lang === 'es' ? 'LISTO PARA EMPEZAR' : 'READY TO START')
+    : isConnecting
+      ? (lang === 'es' ? 'COMPROBANDO CONEXIÓN' : 'CHECKING CONNECTION')
+      : isFullyLive
+        ? (lang === 'es' ? 'TODO CONECTADO' : 'ALL CONNECTED')
+        : hasSomeData
+          ? (lang === 'es' ? 'DATOS PARCIALES' : 'PARTIAL DATA')
+          : errorCount > 0
+            ? (lang === 'es' ? 'REVISAR ACCESO A DATOS' : 'CHECK DATA ACCESS')
+            : (lang === 'es' ? 'SIN CONEXIÓN' : 'OFFLINE');
+  const latestMetricTime = dashboard
+    .map((widget) => liveMetrics[widget.id]?.updatedAt)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => new Date(value))
+    .filter((value) => !Number.isNaN(value.getTime()))
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  const latestMetricLabel = latestMetricTime
+    ? new Intl.DateTimeFormat(lang === 'es' ? 'es-ES' : 'en-US', { hour: '2-digit', minute: '2-digit' }).format(latestMetricTime)
+    : null;
 
   const sendInterviewMessage = async (textToSend?: string) => {
     const msg = textToSend?.trim();
@@ -244,12 +282,13 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
+    <div className="min-h-screen bg-[var(--app-canvas)] text-slate-800 flex flex-col font-sans">
       {/* Top Bar Contract (3-Zone Header) */}
       <TopNavBar
         title={t('title')}
         badge={t('badge')}
         provider={provider}
+        hasReferenceFiles={mediaFiles.length > 0}
         onProviderChange={setProvider}
         ollamaModel={ollamaModel}
         onOllamaModelChange={setOllamaModel}
@@ -269,6 +308,8 @@ function App() {
         onOpenSettings={() => setSettingsModalOpen(true)}
         lang={lang}
         onToggleLang={() => setLang(lang === 'en' ? 'es' : 'en')}
+        theme={theme}
+        onThemeChange={setTheme}
         isSynthesizing={isSynthesizing}
         hasWidgets={dashboard.length > 0}
         onOpenJsonModal={() => setJsonModalOpen(true)}
@@ -294,7 +335,13 @@ function App() {
               sendInterviewMessage(prompt);
             }
           }}
+          mediaFiles={mediaFiles}
+          onMediaFilesChange={(files) => {
+            setMediaFiles(files);
+            if (files.length > 0 && provider === 'ollama') setProvider('solusol');
+          }}
           isGenerating={isGenerating}
+          lang={lang}
           placeholder={t('placeholder')}
           generatingLabel={t('generating')}
           generateLabel={t('generate')}
@@ -303,24 +350,50 @@ function App() {
       )}
 
       {/* Workspace Tripartite Layout */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-auto md:overflow-hidden">
         {/* Left: Component Palette */}
         {!isPreviewMode && (
           <PaletteSidebar
             onAddComponent={addComponent}
             title={t('palette')}
             addLabel={t('add')}
+            lang={lang}
           />
         )}
 
         {/* Center: Canvas or Polyglot Target Code */}
-        <main className="flex-1 overflow-y-auto p-8">
+        <main className="canvas-stage flex-1 min-w-0 min-h-[420px] overflow-y-auto p-3 sm:p-4 md:p-5 xl:p-7">
           {viewMode === 'canvas' ? (
             <div className="max-w-6xl mx-auto">
+              <section className="workspace-enter flex flex-wrap items-center justify-between gap-4 mb-6 px-1">
+                <div className="flex items-center gap-3">
+                  <span className="w-11 h-11 rounded-lg bg-[var(--app-ink)] text-[var(--app-lime)] flex items-center justify-center shadow-sm">
+                    <Sun size={21} />
+                  </span>
+                  <div>
+                    <p className="text-[10px] font-bold tracking-[0.12em] text-emerald-800 uppercase">{lang === 'es' ? 'ENERGÍA SOLAR' : 'SOLAR ENERGY'}</p>
+                    <h1 className="text-lg font-bold text-[var(--app-text-strong)]">{lang === 'es' ? 'Parque solar SoluSol' : 'SoluSol solar park'}</h1>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-md border border-[var(--app-line)] bg-white/90 px-3 py-2 shadow-sm" role="status" aria-live="polite">
+                  <span className={`w-8 h-8 rounded-md flex items-center justify-center ${isFullyLive ? 'bg-emerald-100 text-emerald-800' : isConnecting ? 'bg-amber-100 text-amber-800' : 'bg-rose-50 text-rose-700'}`}>
+                    {isConnecting ? <LoaderCircle size={16} className="animate-spin" /> : isFullyLive ? <Activity size={16} /> : <WifiOff size={16} />}
+                  </span>
+                  <span>
+                    <span className="block text-[10px] font-bold tracking-wide text-slate-500">{connectionLabel}</span>
+                    <span className="block text-xs font-semibold text-[var(--app-text-strong)]">
+                      {liveCount}/{dashboard.length} {lang === 'es' ? 'fuentes activas' : 'active sources'}
+                      {demoCount > 0 && <span className="ml-2 text-amber-700">· {demoCount} demo</span>}
+                    </span>
+                  </span>
+                  {latestMetricLabel && <span className="hidden sm:block border-l border-slate-200 pl-3 text-[10px] font-mono text-slate-500">{lang === 'es' ? 'ACTUALIZADO' : 'UPDATED'} {latestMetricLabel}</span>}
+                </div>
+              </section>
               {dashboard.length === 0 ? (
-                <div className="h-96 flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-lg text-slate-400 p-8 text-center">
-                  <p className="text-sm font-medium">Workspace is empty</p>
-                  <p className="text-xs mt-1">Use the generator above or add components from the palette.</p>
+                <div className="h-96 flex flex-col items-center justify-center border border-dashed border-emerald-300 rounded-lg bg-white/70 text-slate-500 p-8 text-center">
+                  <span className="w-14 h-14 flex items-center justify-center rounded-xl bg-amber-100 text-amber-800 mb-4"><Sun size={24} /></span>
+                  <p className="text-base font-semibold text-[var(--app-text-strong)]">{lang === 'es' ? 'Empecemos por lo importante' : 'Start with what matters'}</p>
+                  <p className="text-sm mt-1">{lang === 'es' ? 'Describe lo que quieres seguir o añade un widget desde la izquierda.' : 'Describe what you want to track or add a widget from the left.'}</p>
                 </div>
               ) : (
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -333,6 +406,7 @@ function App() {
                           isSelected={comp.id === selectedId}
                           metric={liveMetrics[comp.id]}
                           isLoading={!!loadingMetrics[comp.id]}
+                          lang={lang}
                           onSelect={() => setSelectedId(comp.id)}
                           onDuplicate={() => duplicateComponent(comp)}
                           onDelete={() => {
@@ -353,6 +427,7 @@ function App() {
               onSelectFileIndex={setSelectedFileIndex}
               activeTab={activeProjectTab}
               onSelectTab={setActiveProjectTab}
+              lang={lang}
               onNotify={(msg) => setTransientStatus(msg, 2000)}
             />
           ) : (
@@ -361,6 +436,7 @@ function App() {
               provider={provider}
               ollamaModel={ollamaModel}
               code={generatedCode}
+              lang={lang}
               onNotify={(msg) => setTransientStatus(msg, 2000)}
             />
           )}
@@ -386,6 +462,7 @@ function App() {
               delete: t('delete'),
               selectToEdit: t('selectToEdit'),
             }}
+            lang={lang}
           />
         )}
       </div>

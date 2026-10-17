@@ -1,6 +1,7 @@
 /** Restricts upstream forwarding to explicitly approved endpoints and methods. */
 export const ALLOWED_SOLUSOL_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['telemetry', new Set(['GET'])],
+  ['api/v1/admin/telemetry', new Set(['GET'])],
   ['api/generate-project', new Set(['POST'])],
   ['api/generate-dashboard', new Set(['POST'])],
   ['api/export-code', new Set(['POST'])],
